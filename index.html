@@ -67,7 +67,7 @@ async function carregarDadosSupabase() {
   while (true) {
     const { data, error } = await sb
       .from("registros")
-      .select("colaborador,obra,data,horas_str,setor,disciplina,tarefa")
+      .select("colaborador,obra,data,horas,setor,disciplina,tarefa")
       .range(from, from + pageSize - 1);
     if (error) throw error;
     if (!data || data.length === 0) break;
@@ -99,7 +99,7 @@ async function carregarDadosSupabase() {
 
   const rows = todos.map((r) => {
     const dateInt = r.data ? parseInt(String(r.data).replace(/-/g, ""), 10) : 0;
-    const horas = parseFloat(r.horas_str) || 0;
+    const horas = Number(r.horas) || 0;
     return [
       dateInt,
       r.colaborador ? (colabIdx.has(r.colaborador) ? colabIdx.get(r.colaborador) : -1) : -1,
