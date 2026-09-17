@@ -323,12 +323,25 @@ const PALETTE = ["#2E5C8A", "#C97A2B", "#5C8A5C", "#A13D3D", "#7A6A8A", "#4A7A6A
 const ZERO_COST_TIPOS = new Set([5, 7, 9]); // Ferias, Treinamento, Feriado
 const PRODUCTIVE_TIPOS = new Set([1, 2, 8]); // Gestao, Reuniao, Servico Interno
 
+// Alguns arquivos importados não trazem a coluna "Tipo". Para que Tempo
+// Indireto continue funcionando, reconhecemos também os projetos-categoria.
+const TIPO_POR_PROJETO = new Map([
+  ["ATESTADO", 4], ["FERIAS", 5], ["FÉRIAS", 5], ["FALTA", 6],
+  ["TREINAMENTO", 7], ["FERIADO", 9],
+]);
+function tipoEfetivo(r) {
+  if (r[7] !== 0 && r[7] !== undefined && r[7] !== null) return r[7];
+  const projeto = String(RAW.projetos[r[3]] || "").trim().toUpperCase();
+  return TIPO_POR_PROJETO.get(projeto) ?? 0;
+}
+
 function isProdRow(r) {
-  return r[7] === 0 || PRODUCTIVE_TIPOS.has(r[7]);
+  const tipo = tipoEfetivo(r);
+  return tipo === 0 || PRODUCTIVE_TIPOS.has(tipo);
 }
 
 function rowCusto(r, custoMap) {
-  if (ZERO_COST_TIPOS.has(r[7])) return { custo: 0, isProdCost: true };
+  if (ZERO_COST_TIPOS.has(tipoEfetivo(r))) return { custo: 0, isProdCost: true };
   const custoHora = custoMap[RAW.colaboradores[r[1]]] || 0;
   const custo = r[6] * custoHora;
   return { custo, isProdCost: isProdRow(r) };
@@ -645,7 +658,7 @@ export default function App() {
       if (filters.setor.size && !filters.setor.has(r[2])) return false;
       if (filters.projeto.size && !filters.projeto.has(r[3])) return false;
       if (filters.disciplina.size && !filters.disciplina.has(r[4])) return false;
-      if (filters.tipo.size && !filters.tipo.has(r[7])) return false;
+      if (filters.tipo.size && !filters.tipo.has(tipoEfetivo(r))) return false;
       if (tSearch && (r[5] === -1 || !RAW.tarefas[r[5]].toUpperCase().includes(tSearch))) return false;
       return true;
     });
@@ -710,7 +723,7 @@ export default function App() {
     window.XLSX.utils.book_append_sheet(livro, aba, nome);
   };
   const baixarExcel = (livro, nome) => window.XLSX.writeFile(livro, nome, { bookType: "xlsx", cellStyles: true, compression: true });
-  const linhasApontamento = (rows) => rows.map((r) => [dataParaExcel(r[0]), RAW.colaboradores[r[1]] || "", RAW.setores[r[2]] || "", RAW.projetos[r[3]] || "", RAW.disciplinas[r[4]] || "", r[5] === -1 ? "" : RAW.tarefas[r[5]], Number(r[6]) || 0, RAW.tipos[r[7]] || "Produtiva"]);
+  const linhasApontamento = (rows) => rows.map((r) => [dataParaExcel(r[0]), RAW.colaboradores[r[1]] || "", RAW.setores[r[2]] || "", RAW.projetos[r[3]] || "", RAW.disciplinas[r[4]] || "", r[5] === -1 ? "" : RAW.tarefas[r[5]], Number(r[6]) || 0, RAW.tipos[tipoEfetivo(r)] || "Produtiva"]);
   const cabecalhosApontamento = ["Data", "Colaborador", "Setor", "Projeto", "Disciplina", "Tarefa", "Horas", "Tipo"];
   const exportarRelatorioExcel = () => {
     if (!window.XLSX) { setImportStatus("A biblioteca Excel não foi carregada. Verifique a conexão e tente novamente."); return; }
@@ -899,7 +912,7 @@ const axisStyle = { fontSize: 10.5, fill: "#7c8ba1" };
 const tooltipStyle = { background: "#141a22", border: "1px solid #2c3a4d", fontSize: 12, borderRadius: 3 };
 
 function DashboardView({ filteredRows, kpis, custoMap, hasCusto }) {
-  const hhDireto = useMemo(() => filteredRows.filter((r) => r[7] === 0).reduce((s, r) => s + r[6], 0), [filteredRows]);
+  const hhDireto = useMemo(() => filteredRows.filter((r) => tipoEfetivo(r) === 0).reduce((s, r) => s + r[6], 0), [filteredRows]);
   const porProjeto = useMemo(() => {
     const map = aggregateBy(filteredRows.filter((r) => !PLACEHOLDER_PROJ_IDX.has(r[3])), (r) => r[3], custoMap);
     return mapToArr(map, (i) => RAW.projetos[i]).sort((a, b) => b.horas - a.horas).slice(0, 10);
@@ -923,7 +936,7 @@ function DashboardView({ filteredRows, kpis, custoMap, hasCusto }) {
   const pieTipo = useMemo(() => {
     const m = new Map();
     for (const r of filteredRows) {
-      const key = r[7];
+      const key = tipoEfetivo(r);
       m.set(key, (m.get(key) || 0) + r[6]);
     }
     return Array.from(m.entries()).map(([t, v]) => ({ name: RAW.tipos[t], value: v, tipo: t })).sort((a, b) => b.value - a.value);
@@ -1106,8 +1119,9 @@ function ImprodutivoView({ filteredRows, custoMap, hasCusto }) {
     const m = new Map();
     for (const r of naoProd) {
       const { custo } = rowCusto(r, custoMap);
-      if (!m.has(r[7])) m.set(r[7], { horas: 0, custo: 0 });
-      const g = m.get(r[7]);
+      const tipo = tipoEfetivo(r);
+      if (!m.has(tipo)) m.set(tipo, { horas: 0, custo: 0 });
+      const g = m.get(tipo);
       g.horas += r[6]; g.custo += custo;
     }
     return Array.from(m.entries()).map(([t, g]) => ({ tipo: RAW.tipos[t], t, ...g })).sort((a, b) => b.horas - a.horas);
@@ -1138,6 +1152,7 @@ function ImprodutivoView({ filteredRows, custoMap, hasCusto }) {
         <div style={{ fontSize: 11, color: "#5c6b80", marginBottom: 12 }}>
           Regra: Serviço Interno, Reunião e Gestão contam como horas e custo produtivos (não aparecem aqui). Férias, Feriado e Treinamento continuam improdutivas em horas, mas não geram custo.
         </div>
+        {naoProd.length === 0 && <div style={{ padding: "10px 12px", marginBottom: 12, border: "1px solid #584b24", background: "#2a2514", color: "#dbc47c", borderRadius: 3, fontSize: 12 }}>Nenhum tempo indireto foi encontrado para os filtros atuais. Limpe o filtro “Tipo de Hora” ou importe a coluna Tipo; projetos identificados como Férias, Atestado, Falta, Feriado e Treinamento já são classificados automaticamente.</div>}
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <ChartBox title="Distribuição por categoria">
             <PieChart>
@@ -1588,7 +1603,7 @@ function RevisaoView() {
     { key: "projeto", label: "Projeto", render: (r) => RAW.projetos[r[3]] },
     { key: "tarefa", label: "Tarefa", render: (r) => (r[5] === -1 ? "—" : RAW.tarefas[r[5]]) },
     { key: "horas", label: "Horas", align: "right", mono: true, render: (r) => fmtH(r[6]) },
-    { key: "tipo", label: "Tipo", render: (r) => RAW.tipos[r[7]] },
+    { key: "tipo", label: "Tipo", render: (r) => RAW.tipos[tipoEfetivo(r)] },
   ];
   return (
     <div>
