@@ -20,16 +20,6 @@
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#0c1016; color: #dbe2ec; }
   #root { min-height: 100vh; }
-  
-  /* Animações e Estilos Adicionais */
-  .fade-in { animation: fadeIn 0.3s ease-in-out; }
-  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  
-  /* Scroll customizado nas tabelas */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: #0c1016; }
-  ::-webkit-scrollbar-thumb { background: #2c3a4d; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3c4c63; }
 </style>
 </head>
 <body>
@@ -67,10 +57,13 @@ const SUPABASE_URL = "https://tvvxiypewbephjvonwds.supabase.co";
 const SUPABASE_KEY = "sb_publishable_t5s5ev6j_npbkE9DokHPAA_5ILdCtiy";
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Busca todos os registros de horas do banco e monta a mesma estrutura RAW
+// que o painel usava antes (colaboradores/setores/projetos/disciplinas/tarefas + rows indexados).
 async function carregarDadosSupabase() {
   let todos = [];
   let from = 0;
   const pageSize = 1000;
+  // pagina em blocos de 1000 (limite padrão de linhas por consulta no Supabase)
   while (true) {
     const { data, error } = await sb
       .from("registros")
@@ -115,7 +108,10 @@ async function carregarDadosSupabase() {
       r.disciplina ? (discIdx.has(r.disciplina) ? discIdx.get(r.disciplina) : -1) : -1,
       r.tarefa ? (tarefaIdx.has(r.tarefa) ? tarefaIdx.get(r.tarefa) : -1) : -1,
       horas,
-      0, 0, 0,
+      0, // tipo: o banco novo não guarda a classificação (Produtiva/Reunião/Férias...);
+         // por isso tratamos todo apontamento como "Produtiva" até esse campo existir na tabela.
+      0,
+      0,
     ];
   });
 
@@ -141,10 +137,15 @@ const TIPO_COLORS = {
 };
 const PALETTE = ["#2E5C8A", "#C97A2B", "#5C8A5C", "#A13D3D", "#7A6A8A", "#4A7A6A", "#B0562F", "#3E7CB1", "#8B6F47", "#767676", "#5B7DB1", "#8B3A3A"];
 
-const ZERO_COST_TIPOS = new Set([5, 7, 9]); 
-const PRODUCTIVE_TIPOS = new Set([1, 2, 8]); 
+// Regra de produtividade (ajustada pelo usuário): Serviço Interno, Reunião e Gestão contam
+// como horas E custo produtivos. Férias/Feriado/Treinamento continuam improdutivas em horas,
+// mas não geram custo.
+const ZERO_COST_TIPOS = new Set([5, 7, 9]); // Ferias, Treinamento, Feriado
+const PRODUCTIVE_TIPOS = new Set([1, 2, 8]); // Gestao, Reuniao, Servico Interno
 
-function isProdRow(r) { return r[7] === 0 || PRODUCTIVE_TIPOS.has(r[7]); }
+function isProdRow(r) {
+  return r[7] === 0 || PRODUCTIVE_TIPOS.has(r[7]);
+}
 
 function rowCusto(r, custoMap) {
   if (ZERO_COST_TIPOS.has(r[7])) return { custo: 0, isProdCost: true };
@@ -153,6 +154,7 @@ function rowCusto(r, custoMap) {
   return { custo, isProdCost: isProdRow(r) };
 }
 
+// ---------- generic aggregation ----------
 function aggregateBy(rows, keyFn, custoMap, includeIdx) {
   const map = new Map();
   for (const r of rows) {
@@ -189,6 +191,7 @@ function mapToArr(map, nameOf) {
   }));
 }
 
+// ---------- small UI atoms ----------
 function KpiCard({ label, value, sub, accent }) {
   return (
     <div style={{
@@ -301,8 +304,6 @@ function MultiSelect({ label, options, selected, onChange }) {
 
 const btnGhost = { background: "transparent", border: "1px solid #2c3a4d", color: "#9fb0c6", borderRadius: 3, padding: "5px 10px", fontSize: 11.5, cursor: "pointer" };
 const btnPrimary = { background: "#2E5C8A", border: "1px solid #3E7CB1", color: "#eaf1fb", borderRadius: 3, padding: "5px 10px", fontSize: 11.5, cursor: "pointer" };
-const btnSuccess = { background: "#3d7e52", border: "1px solid #4a9e66", color: "#eaf1fb", borderRadius: 3, padding: "5px 10px", fontSize: 11.5, cursor: "pointer" };
-const btnDanger = { background: "#A13D3D", border: "1px solid #b54a4a", color: "#eaf1fb", borderRadius: 3, padding: "5px 10px", fontSize: 11.5, cursor: "pointer" };
 
 const NAV = [
   ["dashboard", "Dashboard"], ["projetos", "Projetos"], ["funcionarios", "Funcionários"],
@@ -321,6 +322,7 @@ export default function App() {
   const [custoLoaded, setCustoLoaded] = useState(false);
   const [thresholds, setThresholds] = useState({ improdutivoPct: 30, hhMultiplicador: 2, produtividadeMin: 70, horasDiaMax: 10 });
 
+  // ---------- Login + carregamento dos dados do Supabase ----------
   const [session, setSession] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
@@ -367,6 +369,7 @@ export default function App() {
     return () => { mounted = false; };
   }, [session]);
 
+  // Botão "Atualizar dados": busca de novo no Supabase sem precisar recarregar a página inteira.
   async function atualizarDadosManual() {
     setAtualizandoManual(true);
     setErroAtualizar("");
@@ -398,25 +401,18 @@ export default function App() {
   const pageWrapStyle = { fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif", background: "#0c1016", color: "#dbe2ec", minHeight: "100vh", padding: 16, display: "flex", alignItems: "center", justifyContent: "center" };
 
   useEffect(() => {
+    // Nesta versão publicada fora do Claude, usamos localStorage (guardado só neste navegador)
+    // em vez do window.storage do Claude, que só existe dentro do ambiente de artifacts.
     try {
       const raw = localStorage.getItem("custo_hora_colaboradores");
       if (raw) setCustoMap(JSON.parse(raw));
-    } catch (e) {}
+    } catch (e) { /* sem dado salvo ainda */ }
     setCustoLoaded(true);
   }, []);
 
   const updateCusto = useCallback((nome, valor) => {
     setCustoMap((prev) => {
       const next = { ...prev, [nome]: valor };
-      try { localStorage.setItem("custo_hora_colaboradores", JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
-  }, []);
-
-  // Nova função para salvar múltiplos dados com segurança
-  const updateCustoEmMassa = useCallback((novosCustos) => {
-    setCustoMap((prev) => {
-      const next = { ...prev, ...novosCustos };
       try { localStorage.setItem("custo_hora_colaboradores", JSON.stringify(next)); } catch (e) {}
       return next;
     });
@@ -461,6 +457,7 @@ export default function App() {
 
   const opt = (arr, excludeSet) => arr.map((v, i) => [v, i]).filter(([, i]) => !excludeSet || !excludeSet.has(i)).map(([v, i]) => ({ label: v, value: i }));
 
+  // ---------- Telas de login / carregamento (depois de todos os hooks, como o React exige) ----------
   if (authChecking) {
     return <div style={pageWrapStyle}>Verificando login...</div>;
   }
@@ -527,6 +524,7 @@ export default function App() {
         Base: exportação de apontamento de horas por setor.
       </div>
 
+      {/* nav */}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 14, borderBottom: "1px solid #1c242e", paddingBottom: 10 }}>
         {NAV.map(([k, label]) => (
           <button key={k} onClick={() => setView(k)} style={{
@@ -537,25 +535,24 @@ export default function App() {
         ))}
       </div>
 
-      {view !== "custohora" && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 18, padding: 10, background: "#10151d", border: "1px solid #1c242e", borderRadius: 4 }}>
-          <input type="date" value={filters.dateFrom} onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
-            style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12 }} />
-          <span style={{ color: "#5c6b80", fontSize: 12 }}>até</span>
-          <input type="date" value={filters.dateTo} onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
-            style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12 }} />
-          <MultiSelect label="Colaborador" options={opt(RAW.colaboradores)} selected={filters.colab} onChange={(s) => setFilters((f) => ({ ...f, colab: s }))} />
-          <MultiSelect label="Setor" options={opt(RAW.setores)} selected={filters.setor} onChange={(s) => setFilters((f) => ({ ...f, setor: s }))} />
-          <MultiSelect label="Projeto" options={opt(RAW.projetos)} selected={filters.projeto} onChange={(s) => setFilters((f) => ({ ...f, projeto: s }))} />
-          <MultiSelect label="Disciplina" options={opt(RAW.disciplinas)} selected={filters.disciplina} onChange={(s) => setFilters((f) => ({ ...f, disciplina: s }))} />
-          <MultiSelect label="Tipo de Hora" options={RAW.tipos.map((t, i) => ({ label: t, value: i }))} selected={filters.tipo} onChange={(s) => setFilters((f) => ({ ...f, tipo: s }))} />
-          <input placeholder="buscar tarefa..." value={filters.tarefaSearch} onChange={(e) => setFilters((f) => ({ ...f, tarefaSearch: e.target.value }))}
-            style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12, width: 150 }} />
-          <button onClick={() => setFilters({ dateFrom: "", dateTo: "", colab: new Set(), setor: new Set(), projeto: new Set(), disciplina: new Set(), tipo: new Set(), tarefaSearch: "" })}
-            style={btnGhost}>limpar filtros</button>
-          <span style={{ marginLeft: "auto", fontSize: 11.5, color: "#5c6b80" }}>{filteredRows.length.toLocaleString("pt-BR")} registros no filtro</span>
-        </div>
-      )}
+      {/* filters */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 18, padding: 10, background: "#10151d", border: "1px solid #1c242e", borderRadius: 4 }}>
+        <input type="date" value={filters.dateFrom} onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
+          style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12 }} />
+        <span style={{ color: "#5c6b80", fontSize: 12 }}>até</span>
+        <input type="date" value={filters.dateTo} onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
+          style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12 }} />
+        <MultiSelect label="Colaborador" options={opt(RAW.colaboradores)} selected={filters.colab} onChange={(s) => setFilters((f) => ({ ...f, colab: s }))} />
+        <MultiSelect label="Setor" options={opt(RAW.setores)} selected={filters.setor} onChange={(s) => setFilters((f) => ({ ...f, setor: s }))} />
+        <MultiSelect label="Projeto" options={opt(RAW.projetos)} selected={filters.projeto} onChange={(s) => setFilters((f) => ({ ...f, projeto: s }))} />
+        <MultiSelect label="Disciplina" options={opt(RAW.disciplinas)} selected={filters.disciplina} onChange={(s) => setFilters((f) => ({ ...f, disciplina: s }))} />
+        <MultiSelect label="Tipo de Hora" options={RAW.tipos.map((t, i) => ({ label: t, value: i }))} selected={filters.tipo} onChange={(s) => setFilters((f) => ({ ...f, tipo: s }))} />
+        <input placeholder="buscar tarefa..." value={filters.tarefaSearch} onChange={(e) => setFilters((f) => ({ ...f, tarefaSearch: e.target.value }))}
+          style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12, width: 150 }} />
+        <button onClick={() => setFilters({ dateFrom: "", dateTo: "", colab: new Set(), setor: new Set(), projeto: new Set(), disciplina: new Set(), tipo: new Set(), tarefaSearch: "" })}
+          style={btnGhost}>limpar filtros</button>
+        <span style={{ marginLeft: "auto", fontSize: 11.5, color: "#5c6b80" }}>{filteredRows.length.toLocaleString("pt-BR")} registros no filtro</span>
+      </div>
 
       {view === "dashboard" && <DashboardView filteredRows={filteredRows} kpis={kpis} custoMap={custoMap} hasCusto={hasCusto} />}
       {view === "projetos" && <ProjetosView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} />}
@@ -567,10 +564,7 @@ export default function App() {
       {view === "disciplinas" && <DisciplinasView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} />}
       {view === "tarefas" && <TarefasView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} />}
       {view === "alertas" && <AlertasView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} thresholds={thresholds} setThresholds={setThresholds} />}
-      
-      {/* ABA CUSTO/HORA REDESENHADA ABAIXO */}
-      {view === "custohora" && <CustoHoraView custoMap={custoMap} updateCusto={updateCusto} updateCustoEmMassa={updateCustoEmMassa} loaded={custoLoaded} opt={opt} />}
-      
+      {view === "custohora" && <CustoHoraView custoMap={custoMap} updateCusto={updateCusto} loaded={custoLoaded} />}
       {view === "revisao" && <RevisaoView />}
 
       <div style={{ marginTop: 26, paddingTop: 14, borderTop: "1px solid #1c242e", fontSize: 11, color: "#4a5668", lineHeight: 1.6 }}>
@@ -582,7 +576,8 @@ export default function App() {
   );
 }
 
-// ---------------- Views Reutilizadas ----------------
+// ---------------- Views ----------------
+
 function ChartBox({ title, height = 260, children }) {
   return (
     <div style={{ border: "1px solid #263241", borderRadius: 3, padding: 12, background: "#10151d", flex: "1 1 380px", minWidth: 320 }}>
@@ -595,14 +590,628 @@ function ChartBox({ title, height = 260, children }) {
 const axisStyle = { fontSize: 10.5, fill: "#7c8ba1" };
 const tooltipStyle = { background: "#141a22", border: "1px solid #2c3a4d", fontSize: 12, borderRadius: 3 };
 
-function DashboardView({ filteredRows, kpis, custoMap, hasCusto }) { /* Omitida para brevidade (mesmo código que o original) */
-  return <div>Vá até o painel principal, esse componente é padrão.</div>;
+function DashboardView({ filteredRows, kpis, custoMap, hasCusto }) {
+  const porProjeto = useMemo(() => {
+    const map = aggregateBy(filteredRows.filter((r) => !PLACEHOLDER_PROJ_IDX.has(r[3])), (r) => r[3], custoMap);
+    return mapToArr(map, (i) => RAW.projetos[i]).sort((a, b) => b.horas - a.horas).slice(0, 10);
+  }, [filteredRows, custoMap]);
+
+  const porFuncionario = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[1], custoMap);
+    return mapToArr(map, (i) => RAW.colaboradores[i]).sort((a, b) => b.horas - a.horas).slice(0, 10);
+  }, [filteredRows, custoMap]);
+
+  const porSetor = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[2], custoMap);
+    return mapToArr(map, (i) => RAW.setores[i]).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  const mensal = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => monthKey(r[0]), custoMap);
+    return mapToArr(map, (k) => monthLabel(k)).sort((a, b) => a.key - b.key);
+  }, [filteredRows, custoMap]);
+
+  const pieTipo = useMemo(() => {
+    const m = new Map();
+    for (const r of filteredRows) {
+      const key = isProdRow(r) ? 0 : r[7];
+      m.set(key, (m.get(key) || 0) + r[6]);
+    }
+    return Array.from(m.entries()).map(([t, v]) => ({ name: RAW.tipos[t], value: v, tipo: t })).sort((a, b) => b.value - a.value);
+  }, [filteredRows]);
+
+  return (
+    <div>
+      <Section title="Indicadores Executivos">
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <KpiCard label="HH Total" value={fmtH(kpis.horas)} />
+          <KpiCard label="HH Produtivo" value={fmtH(kpis.prod)} accent="#5C8A5C" />
+          <KpiCard label="HH Improdutivo" value={fmtH(kpis.naoProd)} accent="#A13D3D" />
+          <KpiCard label="Produtividade" value={fmtPct(kpis.horas ? kpis.prod / kpis.horas : 0)} accent="#3E7CB1" />
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <KpiCard label="Custo Total" value={hasCusto ? fmtBRL(kpis.custo) : "—"} sub={hasCusto ? undefined : "cadastre custo/hora"} />
+          <KpiCard label="Custo Produtivo" value={hasCusto ? fmtBRL(kpis.custoProd) : "—"} accent="#5C8A5C" />
+          <KpiCard label="Custo Improdutivo" value={hasCusto ? fmtBRL(kpis.custoNaoProd) : "—"} accent="#A13D3D" />
+          <KpiCard label="Custo médio / HH" value={hasCusto && kpis.horas ? fmtBRL(kpis.custo / kpis.horas) : "—"} />
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <KpiCard label="Projetos" value={kpis.projetos} />
+          <KpiCard label="Funcionários" value={kpis.colabs} />
+          <KpiCard label="Setores" value={kpis.setores} />
+          <KpiCard label="Disciplinas" value={kpis.discs} />
+        </div>
+      </Section>
+
+      <Section title="Visão Geral">
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <ChartBox title="Horas por projeto (top 10)">
+            <BarChart data={porProjeto} layout="vertical" margin={{ left: 10, right: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" horizontal={false} />
+              <XAxis type="number" tick={axisStyle} />
+              <YAxis type="category" dataKey="nome" tick={{ ...axisStyle, fontSize: 10 }} width={130} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+              <Bar dataKey="horas" fill="#3E7CB1" radius={[0, 2, 2, 0]} />
+            </BarChart>
+          </ChartBox>
+          <ChartBox title="Produtivo × Improdutivo">
+            <PieChart>
+              <Pie data={pieTipo} dataKey="value" nameKey="name" outerRadius={90} label={(d) => `${d.name} ${fmtPct(d.value / kpis.horas)}`}>
+                {pieTipo.map((e, i) => <Cell key={i} fill={TIPO_COLORS[e.tipo] || PALETTE[i % PALETTE.length]} />)}
+              </Pie>
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+            </PieChart>
+          </ChartBox>
+          <ChartBox title="Horas por funcionário (top 10)">
+            <BarChart data={porFuncionario} layout="vertical" margin={{ left: 10, right: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" horizontal={false} />
+              <XAxis type="number" tick={axisStyle} />
+              <YAxis type="category" dataKey="nome" tick={{ ...axisStyle, fontSize: 10 }} width={110} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+              <Bar dataKey="horas" fill="#C97A2B" radius={[0, 2, 2, 0]} />
+            </BarChart>
+          </ChartBox>
+          <ChartBox title="Produtividade por setor">
+            <BarChart data={porSetor}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" vertical={false} />
+              <XAxis dataKey="nome" tick={{ ...axisStyle, fontSize: 9.5 }} angle={-25} textAnchor="end" height={60} interval={0} />
+              <YAxis tick={axisStyle} tickFormatter={(v) => (v * 100).toFixed(0) + "%"} domain={[0, 1]} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtPct(v)} />
+              <Bar dataKey="produtividade" fill="#5C8A5C" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ChartBox>
+          <ChartBox title="Evolução mensal das horas">
+            <LineChart data={mensal}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" />
+              <XAxis dataKey="nome" tick={axisStyle} />
+              <YAxis tick={axisStyle} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line type="monotone" dataKey="prod" name="Produtivas" stroke="#5C8A5C" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="naoProd" name="Improdutivas" stroke="#A13D3D" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ChartBox>
+          {hasCusto && (
+            <ChartBox title="Evolução mensal do custo">
+              <LineChart data={mensal}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" />
+                <XAxis dataKey="nome" tick={axisStyle} />
+                <YAxis tick={axisStyle} tickFormatter={(v) => (v / 1000).toFixed(0) + "k"} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtBRL(v)} />
+                <Line type="monotone" dataKey="custo" name="Custo" stroke="#3E7CB1" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ChartBox>
+          )}
+        </div>
+      </Section>
+    </div>
+  );
 }
-/* Re-incorporando os códigos dos Views anteriores de forma simplificada para que tudo funcione normal... 
-   Para o propósito do código, manterei exatamante igual ao enviado no documento original */
-// ----------------------------------------------------
-// [INSERIR AQUI OS VIEWS: DashboardView, ProjetosView, FuncionariosView, ImprodutivoView, CustosView, MensalView, SetoresView, DisciplinasView, TarefasView, AlertasView, RevisaoView - CÓPIA EXATA DO ORIGINAL]
-// (Para evitar estourar o limite de resposta na tela, substituiremos a parte principal que você solicitou, que é o CustoHoraView. Vou colocar os originais resumidos no script se necessário, mas foque no CustoHoraView).
+
+function ProjetosView({ filteredRows, custoMap, hasCusto }) {
+  const rows = filteredRows.filter((r) => !PLACEHOLDER_PROJ_IDX.has(r[3]));
+  const totalHoras = rows.reduce((s, r) => s + r[6], 0) || 1;
+  const arr = useMemo(() => {
+    const map = aggregateBy(rows, (r) => r[3], custoMap);
+    return mapToArr(map, (i) => RAW.projetos[i]).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  const cols = [
+    { key: "nome", label: "Projeto" },
+    { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+    { key: "prod", label: "Produtivas", mono: true, align: "right", render: (r) => fmtH(r.prod) },
+    { key: "naoProd", label: "Não Prod.", mono: true, align: "right", render: (r) => fmtH(r.naoProd) },
+    { key: "nColabs", label: "Funcionários", mono: true, align: "right" },
+    { key: "nDias", label: "Dias", mono: true, align: "right" },
+    { key: "mediaHorasDia", label: "Média h/dia", mono: true, align: "right", render: (r) => fmtH(r.mediaHorasDia) },
+    { key: "pctTotal", label: "% do Total", mono: true, align: "right", render: (r) => fmtPct(r.horas / totalHoras) },
+    { key: "produtividade", label: "% Produtivo", mono: true, align: "right", render: (r) => fmtPct(r.produtividade) },
+  ];
+  if (hasCusto) cols.push({ key: "custo", label: "Custo", mono: true, align: "right", render: (r) => fmtBRL(r.custo) });
+
+  return (
+    <div>
+      <Section title={`Ranking de Projetos por Horas (${arr.length})`}>
+        <DataTable columns={cols} rows={arr} maxRows={30} />
+      </Section>
+      <Section title="Projetos que mais consomem HH">
+        <ChartBox title="Top 15 — Horas totais" height={340}>
+          <BarChart data={arr.slice(0, 15)} layout="vertical" margin={{ left: 10, right: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" horizontal={false} />
+            <XAxis type="number" tick={axisStyle} />
+            <YAxis type="category" dataKey="nome" tick={{ ...axisStyle, fontSize: 10 }} width={160} />
+            <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+            <Bar dataKey="horas" fill="#3E7CB1" radius={[0, 2, 2, 0]} />
+          </BarChart>
+        </ChartBox>
+      </Section>
+    </div>
+  );
+}
+
+function FuncionariosView({ filteredRows, custoMap, hasCusto }) {
+  const totalHoras = filteredRows.reduce((s, r) => s + r[6], 0) || 1;
+  const arr = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[1], custoMap);
+    return mapToArr(map, (i) => RAW.colaboradores[i]).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  const cols = [
+    { key: "nome", label: "Colaborador" },
+    { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+    { key: "prod", label: "Produtivas", mono: true, align: "right", render: (r) => fmtH(r.prod) },
+    { key: "naoProd", label: "Improdutivas", mono: true, align: "right", render: (r) => fmtH(r.naoProd) },
+    { key: "nProjetos", label: "Projetos", mono: true, align: "right" },
+    { key: "mediaHorasDia", label: "Média h/dia", mono: true, align: "right", render: (r) => fmtH(r.mediaHorasDia) },
+    { key: "produtividade", label: "% Produtivo", mono: true, align: "right", render: (r) => fmtPct(r.produtividade) },
+    { key: "pctImprod", label: "% Improdutivo", mono: true, align: "right", render: (r) => fmtPct(1 - r.produtividade) },
+  ];
+  if (hasCusto) cols.push({ key: "custo", label: "Custo", mono: true, align: "right", render: (r) => fmtBRL(r.custo) });
+
+  return (
+    <div>
+      <Section title={`Ranking de Funcionários (${arr.length})`}>
+        <DataTable columns={cols} rows={arr} maxRows={30} />
+      </Section>
+      <Section title="Top 15 por horas trabalhadas">
+        <ChartBox title="Horas por colaborador" height={340}>
+          <BarChart data={arr.slice(0, 15)} layout="vertical" margin={{ left: 10, right: 10 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" horizontal={false} />
+            <XAxis type="number" tick={axisStyle} />
+            <YAxis type="category" dataKey="nome" tick={{ ...axisStyle, fontSize: 10 }} width={150} />
+            <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+            <Bar dataKey="horas" fill="#C97A2B" radius={[0, 2, 2, 0]} />
+          </BarChart>
+        </ChartBox>
+      </Section>
+    </div>
+  );
+}
+
+function ImprodutivoView({ filteredRows, custoMap, hasCusto }) {
+  const naoProd = filteredRows.filter((r) => !isProdRow(r));
+  const totalHoras = filteredRows.reduce((s, r) => s + r[6], 0) || 1;
+  const totalNaoProd = naoProd.reduce((s, r) => s + r[6], 0);
+
+  const porTipo = useMemo(() => {
+    const m = new Map();
+    for (const r of naoProd) {
+      const { custo } = rowCusto(r, custoMap);
+      if (!m.has(r[7])) m.set(r[7], { horas: 0, custo: 0 });
+      const g = m.get(r[7]);
+      g.horas += r[6]; g.custo += custo;
+    }
+    return Array.from(m.entries()).map(([t, g]) => ({ tipo: RAW.tipos[t], t, ...g })).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  // naoProd já exclui Servico Interno/Reuniao/Gestao (agora produtivas), então o total abaixo
+  // reflete só as categorias realmente improdutivas (Ferias, Feriado, Atestado, Falta, Treinamento...).
+  const custoRealImprodutivo = porTipo.reduce((s, t) => s + t.custo, 0);
+
+  const porFuncionario = useMemo(() => {
+    const map = aggregateBy(naoProd, (r) => r[1], custoMap);
+    return mapToArr(map, (i) => RAW.colaboradores[i]).sort((a, b) => b.horas - a.horas).slice(0, 15);
+  }, [filteredRows, custoMap]);
+
+  const porSetor = useMemo(() => {
+    const map = aggregateBy(naoProd, (r) => r[2], custoMap);
+    return mapToArr(map, (i) => RAW.setores[i]).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  return (
+    <div>
+      <Section title="Painel de Tempo Indireto">
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+          <KpiCard label="Total Improdutivo" value={fmtH(totalNaoProd)} accent="#A13D3D" />
+          <KpiCard label="% do Total" value={fmtPct(totalNaoProd / totalHoras)} accent="#A13D3D" />
+          {hasCusto && <KpiCard label="Custo Improdutivo" value={fmtBRL(custoRealImprodutivo)} accent="#A13D3D" />}
+        </div>
+        <div style={{ fontSize: 11, color: "#5c6b80", marginBottom: 12 }}>
+          Regra: Serviço Interno, Reunião e Gestão contam como horas e custo produtivos (não aparecem aqui). Férias, Feriado e Treinamento continuam improdutivas em horas, mas não geram custo.
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <ChartBox title="Distribuição por categoria">
+            <PieChart>
+              <Pie data={porTipo} dataKey="horas" nameKey="tipo" outerRadius={90} label={(d) => `${d.tipo} ${fmtPct(d.horas / totalNaoProd)}`}>
+                {porTipo.map((e, i) => <Cell key={i} fill={TIPO_COLORS[e.t] || PALETTE[i % PALETTE.length]} />)}
+              </Pie>
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+            </PieChart>
+          </ChartBox>
+          <ChartBox title="Funcionários com mais horas improdutivas">
+            <BarChart data={porFuncionario} layout="vertical" margin={{ left: 10, right: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" horizontal={false} />
+              <XAxis type="number" tick={axisStyle} />
+              <YAxis type="category" dataKey="nome" tick={{ ...axisStyle, fontSize: 10 }} width={130} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+              <Bar dataKey="horas" fill="#A13D3D" radius={[0, 2, 2, 0]} />
+            </BarChart>
+          </ChartBox>
+        </div>
+      </Section>
+      <Section title="Categorias de horas indiretas">
+        <DataTable
+          columns={[
+            { key: "tipo", label: "Categoria" },
+            { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "pct", label: "% do Improdutivo", mono: true, align: "right", render: (r) => fmtPct(r.horas / totalNaoProd) },
+            ...(hasCusto ? [{ key: "custo", label: "Custo", mono: true, align: "right", render: (r) => fmtBRL(r.custo) }] : []),
+          ]}
+          rows={porTipo}
+        />
+      </Section>
+      <Section title="Setores com mais horas improdutivas">
+        <DataTable
+          columns={[
+            { key: "nome", label: "Setor" },
+            { key: "horas", label: "Horas Improd.", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+          ]}
+          rows={porSetor}
+        />
+      </Section>
+    </div>
+  );
+}
+
+function CustosView({ filteredRows, custoMap, hasCusto }) {
+  if (!hasCusto) {
+    return (
+      <div style={{ padding: 24, textAlign: "center", color: "#7c8ba1", border: "1px dashed #263241", borderRadius: 4 }}>
+        Cadastre o custo/hora dos colaboradores na aba <b>Custo/Hora</b> para liberar esta análise.
+      </div>
+    );
+  }
+  const totalCusto = filteredRows.reduce((s, r) => s + rowCusto(r, custoMap).custo, 0) || 1;
+  const totalHH = filteredRows.reduce((s, r) => s + r[6], 0) || 1;
+  const totalHHProd = filteredRows.filter((r) => isProdRow(r)).reduce((s, r) => s + r[6], 0);
+
+  const porProjeto = useMemo(() => {
+    const map = aggregateBy(filteredRows.filter((r) => !PLACEHOLDER_PROJ_IDX.has(r[3])), (r) => r[3], custoMap);
+    return mapToArr(map, (i) => RAW.projetos[i])
+      .map((r) => ({ ...r, custoMedioHora: r.horas ? r.custo / r.horas : 0 }))
+      .sort((a, b) => b.custo - a.custo);
+  }, [filteredRows, custoMap]);
+
+  const porFuncionario = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[1], custoMap);
+    return mapToArr(map, (i) => RAW.colaboradores[i])
+      .map((r) => ({ ...r, custoMedioProjeto: r.nProjetos ? r.custo / r.nProjetos : 0 }))
+      .sort((a, b) => b.custo - a.custo);
+  }, [filteredRows, custoMap]);
+
+  return (
+    <div>
+      <Section title="Indicadores de Custo e Homem-Hora (HH)">
+        <div style={{ fontSize: 11, color: "#5c6b80", marginBottom: 12 }}>
+          Regra: Serviço Interno, Reunião e Gestão contam como horas e custo produtivos. Férias, Feriado e Treinamento não geram custo.
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+          <KpiCard label="Custo Total" value={fmtBRL(totalCusto)} />
+          <KpiCard label="Custo / HH" value={fmtBRL(totalCusto / totalHH)} />
+          <KpiCard label="Custo / HH Produtivo" value={fmtBRL(totalCusto / (totalHHProd || 1))} accent="#5C8A5C" />
+          <KpiCard label="HH Total" value={fmtH(totalHH)} />
+          <KpiCard label="Custo médio / Projeto" value={fmtBRL(totalCusto / (porProjeto.length || 1))} />
+        </div>
+      </Section>
+      <Section title="Ranking de Projetos por Custo">
+        <DataTable
+          columns={[
+            { key: "nome", label: "Projeto" },
+            { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "custo", label: "Custo Total", mono: true, align: "right", render: (r) => fmtBRL(r.custo) },
+            { key: "custoProd", label: "Custo Produtivo", mono: true, align: "right", render: (r) => fmtBRL(r.custoProd) },
+            { key: "custoNaoProd", label: "Custo Improdutivo", mono: true, align: "right", render: (r) => fmtBRL(r.custoNaoProd) },
+            { key: "nColabs", label: "Funcionários", mono: true, align: "right" },
+            { key: "custoMedioHora", label: "Custo Médio/h", mono: true, align: "right", render: (r) => fmtBRL(r.custoMedioHora) },
+            { key: "pct", label: "% do Custo Total", mono: true, align: "right", render: (r) => fmtPct(r.custo / totalCusto) },
+          ]}
+          rows={porProjeto}
+          maxRows={30}
+        />
+      </Section>
+      <Section title="Custo por Funcionário">
+        <DataTable
+          columns={[
+            { key: "nome", label: "Colaborador" },
+            { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "custo", label: "Custo Total", mono: true, align: "right", render: (r) => fmtBRL(r.custo) },
+            { key: "custoProd", label: "Custo Produtivo", mono: true, align: "right", render: (r) => fmtBRL(r.custoProd) },
+            { key: "custoNaoProd", label: "Custo Improdutivo", mono: true, align: "right", render: (r) => fmtBRL(r.custoNaoProd) },
+            { key: "nProjetos", label: "Projetos", mono: true, align: "right" },
+            { key: "custoMedioProjeto", label: "Custo Médio/Projeto", mono: true, align: "right", render: (r) => fmtBRL(r.custoMedioProjeto) },
+          ]}
+          rows={porFuncionario}
+          maxRows={30}
+        />
+      </Section>
+    </div>
+  );
+}
+
+function MensalView({ filteredRows, custoMap, hasCusto }) {
+  const arr = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => monthKey(r[0]), custoMap);
+    return mapToArr(map, (k) => monthLabel(k)).sort((a, b) => a.key - b.key);
+  }, [filteredRows, custoMap]);
+
+  return (
+    <div>
+      <Section title="Análise Mensal">
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <ChartBox title="Horas produtivas × improdutivas por mês">
+            <LineChart data={arr}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" />
+              <XAxis dataKey="nome" tick={axisStyle} />
+              <YAxis tick={axisStyle} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtH(v) + " h"} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line type="monotone" dataKey="prod" name="Produtivas" stroke="#5C8A5C" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="naoProd" name="Improdutivas" stroke="#A13D3D" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ChartBox>
+          <ChartBox title="Índice de produtividade por mês">
+            <LineChart data={arr}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" />
+              <XAxis dataKey="nome" tick={axisStyle} />
+              <YAxis tick={axisStyle} domain={[0, 1]} tickFormatter={(v) => (v * 100).toFixed(0) + "%"} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtPct(v)} />
+              <Line type="monotone" dataKey="produtividade" name="Produtividade" stroke="#3E7CB1" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ChartBox>
+        </div>
+      </Section>
+      <Section title="Tabela Mensal">
+        <DataTable
+          columns={[
+            { key: "nome", label: "Mês" },
+            { key: "horas", label: "Horas Totais", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "prod", label: "Produtivas", mono: true, align: "right", render: (r) => fmtH(r.prod) },
+            { key: "naoProd", label: "Improdutivas", mono: true, align: "right", render: (r) => fmtH(r.naoProd) },
+            { key: "nColabs", label: "Funcionários", mono: true, align: "right" },
+            { key: "nProjetos", label: "Projetos", mono: true, align: "right" },
+            { key: "produtividade", label: "Produtividade", mono: true, align: "right", render: (r) => fmtPct(r.produtividade) },
+            ...(hasCusto ? [{ key: "custo", label: "Custo Total", mono: true, align: "right", render: (r) => fmtBRL(r.custo) }] : []),
+          ]}
+          rows={arr}
+          maxRows={24}
+        />
+      </Section>
+    </div>
+  );
+}
+
+function SetoresView({ filteredRows, custoMap, hasCusto }) {
+  const arr = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[2], custoMap);
+    return mapToArr(map, (i) => RAW.setores[i]).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  return (
+    <div>
+      <Section title="Ranking de Setores">
+        <DataTable
+          columns={[
+            { key: "nome", label: "Setor" },
+            { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "prod", label: "Produtivas", mono: true, align: "right", render: (r) => fmtH(r.prod) },
+            { key: "naoProd", label: "Improdutivas", mono: true, align: "right", render: (r) => fmtH(r.naoProd) },
+            { key: "produtividade", label: "Produtividade", mono: true, align: "right", render: (r) => fmtPct(r.produtividade) },
+            { key: "nColabs", label: "Funcionários", mono: true, align: "right" },
+            { key: "nProjetos", label: "Projetos", mono: true, align: "right" },
+            ...(hasCusto ? [
+              { key: "custo", label: "Custo Total", mono: true, align: "right", render: (r) => fmtBRL(r.custo) },
+              { key: "custoProd", label: "Custo Produtivo", mono: true, align: "right", render: (r) => fmtBRL(r.custoProd) },
+            ] : []),
+          ]}
+          rows={arr}
+        />
+      </Section>
+      <ChartBox title="Comparativo de produtividade entre setores" height={300}>
+        <BarChart data={arr}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1c242e" vertical={false} />
+          <XAxis dataKey="nome" tick={{ ...axisStyle, fontSize: 9.5 }} angle={-20} textAnchor="end" height={60} interval={0} />
+          <YAxis tick={axisStyle} domain={[0, 1]} tickFormatter={(v) => (v * 100).toFixed(0) + "%"} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtPct(v)} />
+          <Bar dataKey="produtividade" fill="#5C8A5C" radius={[2, 2, 0, 0]} />
+        </BarChart>
+      </ChartBox>
+    </div>
+  );
+}
+
+function DisciplinasView({ filteredRows, custoMap, hasCusto }) {
+  const arr = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[4], custoMap);
+    return mapToArr(map, (i) => RAW.disciplinas[i]).sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  return (
+    <div>
+      <Section title="Análise por Disciplina">
+        <DataTable
+          columns={[
+            { key: "nome", label: "Disciplina" },
+            { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "prod", label: "Produtivas", mono: true, align: "right", render: (r) => fmtH(r.prod) },
+            { key: "naoProd", label: "Improdutivas", mono: true, align: "right", render: (r) => fmtH(r.naoProd) },
+            { key: "produtividade", label: "% Produtivo", mono: true, align: "right", render: (r) => fmtPct(r.produtividade) },
+            { key: "nColabs", label: "Funcionários", mono: true, align: "right" },
+            { key: "nProjetos", label: "Projetos", mono: true, align: "right" },
+            ...(hasCusto ? [{ key: "custo", label: "Custo", mono: true, align: "right", render: (r) => fmtBRL(r.custo) }] : []),
+          ]}
+          rows={arr}
+          maxRows={35}
+        />
+      </Section>
+    </div>
+  );
+}
+
+function TarefasView({ filteredRows, custoMap, hasCusto }) {
+  const arr = useMemo(() => {
+    const rows = filteredRows.filter((r) => r[5] !== -1);
+    const map = aggregateBy(rows, (r) => r[5], custoMap);
+    return mapToArr(map, (i) => RAW.tarefas[i])
+      .map((r) => ({ ...r, mediaOcorrencia: r.n ? r.horas / r.n : 0 }))
+      .sort((a, b) => b.horas - a.horas);
+  }, [filteredRows, custoMap]);
+
+  return (
+    <div>
+      <Section title="Ranking de Tarefas por HH consumido" right={<span style={{ fontSize: 11, color: "#5c6b80" }}>use o filtro "buscar tarefa" acima para localizar uma atividade específica</span>}>
+        <DataTable
+          columns={[
+            { key: "nome", label: "Tarefa" },
+            { key: "horas", label: "Horas", mono: true, align: "right", render: (r) => fmtH(r.horas) },
+            { key: "n", label: "Ocorrências", mono: true, align: "right" },
+            { key: "mediaOcorrencia", label: "Média/Ocorrência", mono: true, align: "right", render: (r) => fmtH(r.mediaOcorrencia) },
+            { key: "nColabs", label: "Funcionários", mono: true, align: "right" },
+            { key: "nProjetos", label: "Projetos", mono: true, align: "right" },
+            ...(hasCusto ? [{ key: "custo", label: "Custo", mono: true, align: "right", render: (r) => fmtBRL(r.custo) }] : []),
+          ]}
+          rows={arr}
+          maxRows={40}
+        />
+      </Section>
+    </div>
+  );
+}
+
+function AlertasView({ filteredRows, custoMap, hasCusto, thresholds, setThresholds }) {
+  const porFuncionario = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[1], custoMap);
+    return mapToArr(map, (i) => RAW.colaboradores[i]);
+  }, [filteredRows, custoMap]);
+
+  const porProjeto = useMemo(() => {
+    const map = aggregateBy(filteredRows.filter((r) => !PLACEHOLDER_PROJ_IDX.has(r[3])), (r) => r[3], custoMap);
+    return mapToArr(map, (i) => RAW.projetos[i]);
+  }, [filteredRows, custoMap]);
+
+  const porSetor = useMemo(() => {
+    const map = aggregateBy(filteredRows, (r) => r[2], custoMap);
+    return mapToArr(map, (i) => RAW.setores[i]);
+  }, [filteredRows, custoMap]);
+
+  const mediaHHProjeto = porProjeto.length ? porProjeto.reduce((s, p) => s + p.horas, 0) / porProjeto.length : 0;
+  const custoMedioProjeto = porProjeto.length ? porProjeto.reduce((s, p) => s + p.custo, 0) / porProjeto.length : 0;
+
+  const funcAltoImprodutivo = porFuncionario.filter((f) => f.horas > 0 && (1 - f.produtividade) * 100 >= thresholds.improdutivoPct).sort((a, b) => (1 - b.produtividade) - (1 - a.produtividade));
+  const funcExcessoHoras = porFuncionario.filter((f) => f.mediaHorasDia >= thresholds.horasDiaMax).sort((a, b) => b.mediaHorasDia - a.mediaHorasDia);
+  const projetosAltoHH = porProjeto.filter((p) => mediaHHProjeto > 0 && p.horas >= mediaHHProjeto * thresholds.hhMultiplicador).sort((a, b) => b.horas - a.horas);
+  const projetosAltoCusto = hasCusto ? porProjeto.filter((p) => custoMedioProjeto > 0 && p.custo >= custoMedioProjeto * thresholds.hhMultiplicador).sort((a, b) => b.custo - a.custo) : [];
+  const setoresBaixaProdutividade = porSetor.filter((s) => s.horas > 0 && s.produtividade * 100 < thresholds.produtividadeMin).sort((a, b) => a.produtividade - b.produtividade);
+
+  const numInput = (key, label, suffix) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11, color: "#7c8ba1" }}>
+      {label}
+      <input type="number" value={thresholds[key]} onChange={(e) => setThresholds((t) => ({ ...t, [key]: Number(e.target.value) }))}
+        style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "5px 7px", width: 80, fontSize: 12 }} />
+    </label>
+  );
+
+  const AlertList = ({ title, items, render }) => (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: "#c3cee0", marginBottom: 6 }}>{title} <span style={{ color: "#5c6b80", fontWeight: 400 }}>({items.length})</span></div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12, color: "#5c6b80", padding: "6px 0" }}>nenhum item acima do parâmetro</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {items.slice(0, 12).map((it, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 10px", background: "#141a22", border: "1px solid #2c1f1f", borderLeft: "3px solid #A13D3D", borderRadius: 2, fontSize: 12.5 }}>
+              {render(it)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div>
+      <Section title="Parâmetros dos Alertas">
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+          {numInput("improdutivoPct", "% improdutivo (funcionário) ≥", "%")}
+          {numInput("horasDiaMax", "Média h/dia (funcionário) ≥", "h")}
+          {numInput("hhMultiplicador", "Múltiplo da média (projeto)", "x")}
+          {numInput("produtividadeMin", "Produtividade mínima (setor) <", "%")}
+        </div>
+      </Section>
+      <Section title="Alertas Ativos">
+        <AlertList title="Funcionários com percentual elevado de horas improdutivas" items={funcAltoImprodutivo}
+          render={(f) => <><span>{f.nome}</span><span style={{ fontFamily: "monospace" }}>{fmtPct(1 - f.produtividade)} improdutivo</span></>} />
+        <AlertList title="Funcionários com excesso de horas (média diária alta)" items={funcExcessoHoras}
+          render={(f) => <><span>{f.nome}</span><span style={{ fontFamily: "monospace" }}>{fmtH(f.mediaHorasDia)} h/dia</span></>} />
+        <AlertList title="Projetos com consumo de HH muito acima da média" items={projetosAltoHH}
+          render={(p) => <><span>{p.nome}</span><span style={{ fontFamily: "monospace" }}>{fmtH(p.horas)} h (média: {fmtH(mediaHHProjeto)} h)</span></>} />
+        {hasCusto && <AlertList title="Projetos com custo muito acima da média" items={projetosAltoCusto}
+          render={(p) => <><span>{p.nome}</span><span style={{ fontFamily: "monospace" }}>{fmtBRL(p.custo)} (média: {fmtBRL(custoMedioProjeto)})</span></>} />}
+        <AlertList title="Setores com baixa produtividade" items={setoresBaixaProdutividade}
+          render={(s) => <><span>{s.nome}</span><span style={{ fontFamily: "monospace" }}>{fmtPct(s.produtividade)}</span></>} />
+      </Section>
+    </div>
+  );
+}
+
+function CustoHoraView({ custoMap, updateCusto, loaded }) {
+  const [q, setQ] = useState("");
+  const list = RAW.colaboradores.filter((c) => c.toUpperCase().includes(q.toUpperCase()));
+  return (
+    <div>
+      <Section title="Cadastro de Custo por Hora" right={
+        <input placeholder="buscar colaborador..." value={q} onChange={(e) => setQ(e.target.value)}
+          style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12, width: 200 }} />
+      }>
+        <p style={{ fontSize: 12, color: "#7c8ba1", marginTop: -4 }}>
+          Informe o custo/hora (R$) de cada colaborador. Os valores ficam salvos e habilitam os indicadores financeiros em todas as abas.
+          {!loaded && " carregando..."}
+        </p>
+        <div style={{ border: "1px solid #263241", borderRadius: 3, maxHeight: 520, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: "#141a22", position: "sticky", top: 0 }}>
+                <th style={{ textAlign: "left", padding: "8px 10px", color: "#7c8ba1", fontSize: 10.5, textTransform: "uppercase" }}>Colaborador</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", color: "#7c8ba1", fontSize: 10.5, textTransform: "uppercase" }}>Custo/Hora (R$)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((nome) => (
+                <tr key={nome} style={{ borderBottom: "1px solid #1c242e" }}>
+                  <td style={{ padding: "6px 10px" }}>{nome}</td>
+                  <td style={{ padding: "6px 10px", textAlign: "right" }}>
+                    <input type="number" min="0" step="0.01" value={custoMap[nome] ?? ""} placeholder="0,00"
+                      onChange={(e) => updateCusto(nome, e.target.value === "" ? 0 : Number(e.target.value))}
+                      style={{ background: "#0c1016", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "4px 7px", width: 100, textAlign: "right", fontFamily: "monospace" }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+    </div>
+  );
+}
 
 function RevisaoView() {
   const splitRows = RAW.rows.filter((r) => r[8] === 1);
@@ -617,322 +1226,22 @@ function RevisaoView() {
   ];
   return (
     <div>
-      <Section title={`Pendentes de revisão (${reviewRows.length})`}><DataTable columns={cols} rows={reviewRows} maxRows={50} /></Section>
-    </div>
-  );
-}
-//... Todos os outros views originais seguem normais...
-
-// ==============================================================
-// NOVA ABA DE CUSTO/HORA - ATUALIZADA COM EDIÇÃO EM MASSA E FILTROS
-// ==============================================================
-function CustoHoraView({ custoMap, updateCusto, updateCustoEmMassa, loaded, opt }) {
-  // 1. Estados
-  const [q, setQ] = useState("");
-  const [filtros, setFiltros] = useState({ setor: new Set(), projeto: new Set(), disciplina: new Set() });
-  const [selecao, setSelecao] = useState(new Set());
-  const [rascunho, setRascunho] = useState({});
-  const [valorMassa, setValorMassa] = useState("");
-  const [pagina, setPagina] = useState(0);
-  const [msg, setMsg] = useState(null); // { tipo: 'sucesso' | 'erro', texto: '' }
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [ordenacao, setOrdenacao] = useState({ col: "nome", asc: true });
-
-  const limitePorPagina = 50;
-
-  // 2. Monta os perfis dos colaboradores cruzando com seus apontamentos para uso nos filtros
-  const perfis = useMemo(() => {
-    const map = RAW.colaboradores.map((nome, id) => ({
-      id, nome,
-      setores: new Set(), projetos: new Set(), disciplinas: new Set()
-    }));
-    
-    // Varre todas as horas preenchendo os locais onde a pessoa trabalhou
-    RAW.rows.forEach(r => {
-      const p = map[r[1]];
-      if (p) {
-        if (r[2] !== -1) p.setores.add(r[2]);
-        if (r[3] !== -1 && !PLACEHOLDER_PROJ_IDX.has(r[3])) p.projetos.add(r[3]);
-        if (r[4] !== -1) p.disciplinas.add(r[4]);
-      }
-    });
-
-    return map.map(p => ({
-      ...p,
-      setorStr: Array.from(p.setores).map(i => RAW.setores[i]).join(", ") || "—",
-      projetoStr: Array.from(p.projetos).map(i => RAW.projetos[i]).join(", ") || "—",
-      discStr: Array.from(p.disciplinas).map(i => RAW.disciplinas[i]).join(", ") || "—",
-      custoAtual: custoMap[p.nome] || 0
-    }));
-  }, [custoMap]);
-
-  // 3. Aplica os filtros combinados e ordenação
-  const filtrados = useMemo(() => {
-    return perfis.filter(p => {
-      // Filtro de Nome
-      if (q && !p.nome.toUpperCase().includes(q.toUpperCase())) return false;
-      // Filtros combinados
-      if (filtros.setor.size && !Array.from(filtros.setor).some(s => p.setores.has(s))) return false;
-      if (filtros.projeto.size && !Array.from(filtros.projeto).some(s => p.projetos.has(s))) return false;
-      if (filtros.disciplina.size && !Array.from(filtros.disciplina).some(s => p.disciplinas.has(s))) return false;
-      return true;
-    }).sort((a, b) => {
-      let vA = a[ordenacao.col], vB = b[ordenacao.col];
-      
-      // Ajuste para lidar com textos (ordem alfabética) e números
-      if (typeof vA === 'string') vA = vA.toUpperCase();
-      if (typeof vB === 'string') vB = vB.toUpperCase();
-
-      if (vA < vB) return ordenacao.asc ? -1 : 1;
-      if (vA > vB) return ordenacao.asc ? 1 : -1;
-      return 0;
-    });
-  }, [perfis, q, filtros, ordenacao]);
-
-  // Paginação básica baseada no array filtrado
-  const paginados = filtrados.slice(pagina * limitePorPagina, (pagina + 1) * limitePorPagina);
-  const totalPaginas = Math.ceil(filtrados.length / limitePorPagina);
-
-  // Zera a página quando os filtros mudam
-  useEffect(() => { setPagina(0); }, [q, filtros]);
-
-  // Limpa mensagem automática
-  useEffect(() => {
-    if (msg) {
-      const t = setTimeout(() => setMsg(null), 5000);
-      return () => clearTimeout(t);
-    }
-  }, [msg]);
-
-  // 4. Ações
-  const limparFiltros = () => {
-    setQ("");
-    setFiltros({ setor: new Set(), projeto: new Set(), disciplina: new Set() });
-  };
-
-  const alternarSelecaoGeral = () => {
-    if (selecao.size === filtrados.length && filtrados.length > 0) {
-      setSelecao(new Set()); // Desmarca tudo
-    } else {
-      setSelecao(new Set(filtrados.map(f => f.nome))); // Marca todos do filtro atual
-    }
-  };
-
-  const alternarLinha = (nome) => {
-    const prox = new Set(selecao);
-    if (prox.has(nome)) prox.delete(nome); else prox.add(nome);
-    setSelecao(prox);
-  };
-
-  const aplicarEmMassa = () => {
-    if (selecao.size === 0) {
-      setMsg({ tipo: 'erro', texto: 'Selecione ao menos um colaborador.' });
-      return;
-    }
-    const valM = parseFloat(String(valorMassa).replace(',', '.'));
-    if (isNaN(valM) || valM < 0) {
-      setMsg({ tipo: 'erro', texto: 'Informe um valor válido e positivo.' });
-      return;
-    }
-
-    const proxRascunho = { ...rascunho };
-    selecao.forEach(nome => {
-      proxRascunho[nome] = valM;
-    });
-    setRascunho(proxRascunho);
-    setValorMassa(""); // limpa o input
-    setMsg({ tipo: 'sucesso', texto: `Valor R$ ${valM.toFixed(2)} programado para ${selecao.size} registro(s). Não esqueça de Salvar.` });
-  };
-
-  const alterarRascunhoIndividual = (nome, valor) => {
-    let num = parseFloat(valor);
-    if (isNaN(num) || num < 0) num = 0; // fallback simples visual 
-    setRascunho(prev => ({ ...prev, [nome]: valor === "" ? "" : num }));
-  };
-
-  const salvarAlteracoes = () => {
-    // Só envia os que são números válidos no rascunho
-    const atualizacoes = {};
-    let count = 0;
-    
-    Object.entries(rascunho).forEach(([nome, val]) => {
-      let v = parseFloat(String(val).replace(',', '.'));
-      if (!isNaN(v) && v >= 0) {
-        atualizacoes[nome] = v;
-        count++;
-      }
-    });
-
-    if (count > 0) {
-      updateCustoEmMassa(atualizacoes);
-      setMsg({ tipo: 'sucesso', texto: `${count} registro(s) salvo(s) com sucesso nas configurações globais.` });
-    }
-    
-    setRascunho({});
-    setSelecao(new Set());
-    setShowConfirm(false);
-  };
-
-  const cancelarAlteracoes = () => {
-    setRascunho({});
-    setSelecao(new Set());
-    setShowConfirm(false);
-  };
-
-  const alternarOrdem = (col) => {
-    setOrdenacao(prev => ({
-      col,
-      asc: prev.col === col ? !prev.asc : true
-    }));
-  };
-
-  const thStyle = { textAlign: "left", padding: "10px", color: "#7c8ba1", fontSize: 11, textTransform: "uppercase", cursor: "pointer", userSelect: "none" };
-  const tdStyle = { padding: "8px 10px", fontSize: 12, borderBottom: "1px solid #1c242e" };
-
-  return (
-    <div className="fade-in">
-      <Section title="Gestão e Preenchimento em Massa de Custo/Hora">
-        
-        {/* Barra de Filtros */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12, padding: 12, background: "#10151d", border: "1px solid #1c242e", borderRadius: 4 }}>
-          <input placeholder="Filtrar por nome..." value={q} onChange={(e) => setQ(e.target.value)}
-            style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 10px", fontSize: 12, width: 220 }} />
-          <MultiSelect label="Disciplina" options={opt(RAW.disciplinas)} selected={filtros.disciplina} onChange={(s) => setFiltros(f => ({ ...f, disciplina: s }))} />
-          <MultiSelect label="Setor" options={opt(RAW.setores)} selected={filtros.setor} onChange={(s) => setFiltros(f => ({ ...f, setor: s }))} />
-          <MultiSelect label="Projeto" options={opt(RAW.projetos)} selected={filtros.projeto} onChange={(s) => setFiltros(f => ({ ...f, projeto: s }))} />
-          
-          <button onClick={limparFiltros} style={btnGhost}>Limpar filtros</button>
-          
-          <span style={{ marginLeft: "auto", fontSize: 11.5, color: "#5c6b80" }}>
-            Exibindo {filtrados.length} pessoa(s)
-          </span>
-        </div>
-
-        {/* Barra de Ações em Massa e Salvar */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, padding: "12px 14px", background: "#141a22", border: "1px solid #263241", borderRadius: 4 }}>
-          
-          {/* Lado Esquerdo - Ações de preenchimento */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12, color: "#9fb0c6", fontWeight: 600 }}>{selecao.size} Selecionado(s)</span>
-            <div style={{ width: 1, height: 20, background: "#2c3a4d" }}></div>
-            <input type="number" min="0" step="0.01" placeholder="R$ Valor único..." value={valorMassa} onChange={(e) => setValorMassa(e.target.value)}
-              style={{ background: "#0c1016", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12, width: 130 }} />
-            <button onClick={aplicarEmMassa} style={btnPrimary}>Aplicar aos selecionados</button>
-          </div>
-
-          {/* Lado Direito - Mensagens e Botões de Salvar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {msg && (
-              <span style={{ fontSize: 11.5, color: msg.tipo === 'sucesso' ? '#5C8A5C' : '#e08787', marginRight: 10, fontWeight: 500 }} className="fade-in">
-                {msg.texto}
-              </span>
-            )}
-            
-            {Object.keys(rascunho).length > 0 && (
-              <>
-                <button onClick={cancelarAlteracoes} style={btnGhost}>Cancelar</button>
-                <button onClick={() => setShowConfirm(true)} style={btnSuccess}>
-                  Salvar Alterações ({Object.keys(rascunho).length})
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Tabela Interativa */}
-        <div style={{ border: "1px solid #263241", borderRadius: 4, overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ background: "#10151d", borderBottom: "2px solid #263241" }}>
-                <th style={{ padding: "10px", width: 40, textAlign: "center" }}>
-                  <input type="checkbox" onChange={alternarSelecaoGeral} 
-                    checked={selecao.size > 0 && selecao.size === filtrados.length} 
-                    ref={input => { if (input) input.indeterminate = selecao.size > 0 && selecao.size < filtrados.length; }} />
-                </th>
-                <th style={thStyle} onClick={() => alternarOrdem('nome')}>Colaborador {ordenacao.col === 'nome' && (ordenacao.asc ? '▲' : '▼')}</th>
-                <th style={thStyle} onClick={() => alternarOrdem('discStr')}>Disciplina {ordenacao.col === 'discStr' && (ordenacao.asc ? '▲' : '▼')}</th>
-                <th style={thStyle} onClick={() => alternarOrdem('setorStr')}>Setor {ordenacao.col === 'setorStr' && (ordenacao.asc ? '▲' : '▼')}</th>
-                <th style={thStyle} onClick={() => alternarOrdem('projetoStr')}>Projeto {ordenacao.col === 'projetoStr' && (ordenacao.asc ? '▲' : '▼')}</th>
-                <th style={{...thStyle, textAlign: "right"}} onClick={() => alternarOrdem('custoAtual')}>Custo Atual (R$) {ordenacao.col === 'custoAtual' && (ordenacao.asc ? '▲' : '▼')}</th>
-                <th style={{...thStyle, textAlign: "right", width: 140 }}>Novo Custo / Hora</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginados.length === 0 ? (
-                <tr><td colSpan="7" style={{ textAlign: "center", padding: 30, color: "#5c6b80", fontSize: 13 }}>Nenhum colaborador encontrado com estes filtros.</td></tr>
-              ) : (
-                paginados.map(p => {
-                  const rascunhoAtivo = rascunho[p.nome] !== undefined;
-                  const rowBg = rascunhoAtivo ? "#19283b" : "transparent"; // Destaque para linha editada
-                  
-                  return (
-                    <tr key={p.nome} style={{ background: rowBg, transition: "background 0.2s" }}>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>
-                        <input type="checkbox" checked={selecao.has(p.nome)} onChange={() => alternarLinha(p.nome)} />
-                      </td>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{p.nome}</td>
-                      
-                      {/* Textos com reticências para não quebrar a tabela se o cara estiver em 20 obras */}
-                      <td style={{ ...tdStyle, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.discStr}>{p.discStr}</td>
-                      <td style={{ ...tdStyle, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.setorStr}>{p.setorStr}</td>
-                      <td style={{ ...tdStyle, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.projetoStr}>{p.projetoStr}</td>
-                      
-                      <td style={{ ...tdStyle, textAlign: "right", color: "#9fb0c6", fontFamily: "monospace" }}>
-                        {p.custoAtual ? p.custoAtual.toFixed(2) : "0.00"}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>
-                        <input type="number" min="0" step="0.01" placeholder="0.00"
-                          value={rascunhoAtivo ? rascunho[p.nome] : (p.custoAtual || "")}
-                          onChange={(e) => alterarRascunhoIndividual(p.nome, e.target.value)}
-                          style={{ 
-                            background: rascunhoAtivo ? "#0c1016" : "#141a22", 
-                            border: rascunhoAtivo ? "1px solid #3E7CB1" : "1px solid #2c3a4d", 
-                            borderRadius: 3, color: rascunhoAtivo ? "#eef2f8" : "#dbe2ec", 
-                            padding: "6px 8px", width: 100, textAlign: "right", fontFamily: "monospace" 
-                          }} />
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Paginação */}
-        {totalPaginas > 1 && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
-            <span style={{ fontSize: 11.5, color: "#5c6b80" }}>Página {pagina + 1} de {totalPaginas}</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0} style={btnGhost}>&lt; Anterior</button>
-              <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={pagina >= totalPaginas - 1} style={btnGhost}>Próxima &gt;</button>
-            </div>
-          </div>
-        )}
-
-        {/* Modal de Confirmação */}
-        {showConfirm && (
-          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div className="fade-in" style={{ background: "#10151d", border: "1px solid #263241", borderRadius: 6, padding: 24, width: 400, boxShadow: "0 10px 40px rgba(0,0,0,0.8)" }}>
-              <h3 style={{ margin: "0 0 10px", fontSize: 16, color: "#eef2f8" }}>Salvar Alterações em Massa?</h3>
-              <p style={{ fontSize: 13, color: "#9fb0c6", lineHeight: 1.5, marginBottom: 20 }}>
-                Você está prestes a atualizar o custo/hora de <b>{Object.keys(rascunho).length} colaborador(es)</b>. Esta alteração refletirá em todos os relatórios e indicadores de custo financeiros.
-              </p>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                <button onClick={() => setShowConfirm(false)} style={btnGhost}>Cancelar</button>
-                <button onClick={salvarAlteracoes} style={btnSuccess}>Confirmar e Salvar</button>
-              </div>
-            </div>
-          </div>
-        )}
-
+      <Section title={`Divisões automáticas detectadas na Observação (${splitRows.length})`}>
+        <p style={{ fontSize: 12, color: "#7c8ba1", marginTop: -4 }}>
+          Linhas em que a Observação trouxe uma quantidade explícita (ex.: "30 minutos", "1:30") combinada a uma categoria — a hora foi dividida automaticamente entre produtiva e a categoria indicada.
+        </p>
+        <DataTable columns={cols} rows={splitRows} maxRows={50} />
+      </Section>
+      <Section title={`Pendentes de revisão manual (${reviewRows.length})`}>
+        <p style={{ fontSize: 12, color: "#7c8ba1", marginTop: -4 }}>
+          A Observação menciona uma categoria não produtiva (gestão, reunião, atestado, férias, falta, treinamento) mas sem quantidade explícita — a linha permaneceu classificada como produtiva até revisão manual.
+        </p>
+        <DataTable columns={cols} rows={reviewRows} maxRows={50} />
       </Section>
     </div>
   );
 }
 
-// ---------------- Fim ----------------
-// Adicionei os componentes restantes da aplicação aqui (que você forneceu no código original) para que a aplicação rode perfeitamente.
 
 createRoot(document.getElementById("root")).render(<App />);
 </script>
