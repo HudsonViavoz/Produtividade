@@ -418,6 +418,15 @@ export default function App() {
     });
   }, []);
 
+  const updateCustos = useCallback((alteracoes) => {
+    setCustoMap((prev) => {
+      const next = { ...prev };
+      Object.entries(alteracoes).forEach(([nome, valor]) => { next[nome] = valor; });
+      try { localStorage.setItem("custo_hora_colaboradores", JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }, []);
+
   const hasCusto = Object.keys(custoMap).length > 0;
 
   const dateFromInt2 = (s) => s ? parseInt(s.replace(/-/g, ""), 10) : null;
@@ -564,7 +573,7 @@ export default function App() {
       {view === "disciplinas" && <DisciplinasView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} />}
       {view === "tarefas" && <TarefasView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} />}
       {view === "alertas" && <AlertasView filteredRows={filteredRows} custoMap={custoMap} hasCusto={hasCusto} thresholds={thresholds} setThresholds={setThresholds} />}
-      {view === "custohora" && <CustoHoraView custoMap={custoMap} updateCusto={updateCusto} loaded={custoLoaded} />}
+      {view === "custohora" && <CustoHoraView custoMap={custoMap} updateCusto={updateCusto} updateCustos={updateCustos} loaded={custoLoaded} />}
       {view === "revisao" && <RevisaoView />}
 
       <div style={{ marginTop: 26, paddingTop: 14, borderTop: "1px solid #1c242e", fontSize: 11, color: "#4a5668", lineHeight: 1.6 }}>
@@ -1173,44 +1182,108 @@ function AlertasView({ filteredRows, custoMap, hasCusto, thresholds, setThreshol
   );
 }
 
-function CustoHoraView({ custoMap, updateCusto, loaded }) {
+function CustoHoraView({ custoMap, updateCustos, loaded }) {
   const [q, setQ] = useState("");
-  const list = RAW.colaboradores.filter((c) => c.toUpperCase().includes(q.toUpperCase()));
-  return (
-    <div>
-      <Section title="Cadastro de Custo por Hora" right={
-        <input placeholder="buscar colaborador..." value={q} onChange={(e) => setQ(e.target.value)}
-          style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12, width: 200 }} />
-      }>
-        <p style={{ fontSize: 12, color: "#7c8ba1", marginTop: -4 }}>
-          Informe o custo/hora (R$) de cada colaborador. Os valores ficam salvos e habilitam os indicadores financeiros em todas as abas.
-          {!loaded && " carregando..."}
-        </p>
-        <div style={{ border: "1px solid #263241", borderRadius: 3, maxHeight: 520, overflowY: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead>
-              <tr style={{ background: "#141a22", position: "sticky", top: 0 }}>
-                <th style={{ textAlign: "left", padding: "8px 10px", color: "#7c8ba1", fontSize: 10.5, textTransform: "uppercase" }}>Colaborador</th>
-                <th style={{ textAlign: "right", padding: "8px 10px", color: "#7c8ba1", fontSize: 10.5, textTransform: "uppercase" }}>Custo/Hora (R$)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((nome) => (
-                <tr key={nome} style={{ borderBottom: "1px solid #1c242e" }}>
-                  <td style={{ padding: "6px 10px" }}>{nome}</td>
-                  <td style={{ padding: "6px 10px", textAlign: "right" }}>
-                    <input type="number" min="0" step="0.01" value={custoMap[nome] ?? ""} placeholder="0,00"
-                      onChange={(e) => updateCusto(nome, e.target.value === "" ? 0 : Number(e.target.value))}
-                      style={{ background: "#0c1016", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "4px 7px", width: 100, textAlign: "right", fontFamily: "monospace" }} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Section>
-    </div>
-  );
+  const [filtroSetor, setFiltroSetor] = useState(new Set());
+  const [filtroDisciplina, setFiltroDisciplina] = useState(new Set());
+  const [filtroProjeto, setFiltroProjeto] = useState(new Set());
+  const [selecionados, setSelecionados] = useState(new Set());
+  const [rascunhos, setRascunhos] = useState({});
+  const [valorMassa, setValorMassa] = useState("");
+  const [ordem, setOrdem] = useState({ chave: "nome", dir: "asc" });
+  const [pagina, setPagina] = useState(0);
+  const [mensagem, setMensagem] = useState("");
+  const porPagina = 25;
+
+  // Quando existir uma ACL no ambiente, use window.VIAVOZ_PERMISSOES.custoHora.colaboradores.
+  // Sem uma ACL fornecida pelo sistema, mantém o comportamento atual: todos podem editar.
+  const permitidos = window.VIAVOZ_PERMISSOES?.custoHora?.colaboradores;
+  const podeEditar = (nome) => !Array.isArray(permitidos) || permitidos.includes(nome);
+
+  const perfis = useMemo(() => {
+    const mapa = new Map(RAW.colaboradores.map((nome) => [nome, { disciplinas: new Set(), setores: new Set(), projetos: new Set() }]));
+    RAW.rows.forEach((r) => {
+      const perfil = mapa.get(RAW.colaboradores[r[1]]); if (!perfil) return;
+      if (r[2] >= 0) perfil.setores.add(RAW.setores[r[2]]);
+      if (r[3] >= 0) perfil.projetos.add(RAW.projetos[r[3]]);
+      if (r[4] >= 0) perfil.disciplinas.add(RAW.disciplinas[r[4]]);
+    });
+    return mapa;
+  }, []);
+  const possuiAlgum = (conjunto, filtro) => !filtro.size || [...conjunto].some((valor) => filtro.has(valor));
+  const linhas = useMemo(() => RAW.colaboradores.map((nome) => {
+    const perfil = perfis.get(nome) || { disciplinas: new Set(), setores: new Set(), projetos: new Set() };
+    return { nome, disciplinas: [...perfil.disciplinas].sort().join(" • "), setores: [...perfil.setores].sort().join(" • "), projetos: [...perfil.projetos].sort().join(" • "), perfil, atual: custoMap[nome] ?? "", novo: rascunhos[nome] ?? "" };
+  }).filter((item) => {
+    if (q && !item.nome.toUpperCase().includes(q.toUpperCase())) return false;
+    return possuiAlgum(item.perfil.disciplinas, filtroDisciplina) && possuiAlgum(item.perfil.setores, filtroSetor) && possuiAlgum(item.perfil.projetos, filtroProjeto);
+  }).sort((a, b) => {
+    const av = a[ordem.chave] ?? "", bv = b[ordem.chave] ?? "";
+    const cmp = ordem.chave === "atual" || ordem.chave === "novo" ? Number(av || 0) - Number(bv || 0) : String(av).localeCompare(String(bv), "pt-BR", { numeric: true });
+    return ordem.dir === "asc" ? cmp : -cmp;
+  }), [q, filtroDisciplina, filtroSetor, filtroProjeto, custoMap, perfis, ordem, rascunhos]);
+  const totalPaginas = Math.max(1, Math.ceil(linhas.length / porPagina));
+  const paginaAtual = Math.min(pagina, totalPaginas - 1);
+  const visiveis = linhas.slice(paginaAtual * porPagina, (paginaAtual + 1) * porPagina);
+  const selecionaveis = linhas.filter((item) => podeEditar(item.nome)).map((item) => item.nome);
+  const todosSelecionados = selecionaveis.length > 0 && selecionaveis.every((nome) => selecionados.has(nome));
+  const pendentes = Object.entries(rascunhos).filter(([nome, valor]) => podeEditar(nome) && String(valor) !== String(custoMap[nome] ?? ""));
+
+  const valorValido = (valor) => {
+    const numero = Number(String(valor).replace(",", "."));
+    return String(valor).trim() !== "" && Number.isFinite(numero) && numero >= 0 ? numero : null;
+  };
+  const alternarOrdem = (chave) => setOrdem((atual) => atual.chave === chave ? { chave, dir: atual.dir === "asc" ? "desc" : "asc" } : { chave, dir: "asc" });
+  const alternarSelecionado = (nome) => setSelecionados((atual) => { const proximo = new Set(atual); if (proximo.has(nome)) proximo.delete(nome); else proximo.add(nome); return proximo; });
+  const selecionarTodos = () => setSelecionados((atual) => todosSelecionados ? new Set([...atual].filter((nome) => !selecionaveis.includes(nome))) : new Set([...atual, ...selecionaveis]));
+  const aplicarEmMassa = () => {
+    const valor = valorValido(valorMassa);
+    const nomes = [...selecionados].filter(podeEditar);
+    if (!nomes.length) return setMensagem("Selecione ao menos uma pessoa que você tenha permissão para editar.");
+    if (valor === null) return setMensagem("Informe um custo/hora numérico, não negativo e diferente de vazio.");
+    setRascunhos((atual) => ({ ...atual, ...Object.fromEntries(nomes.map((nome) => [nome, valor])) }));
+    setMensagem(`Valor preparado para ${nomes.length} pessoa(s). Revise e clique em “Salvar alterações”.`);
+  };
+  const salvar = () => {
+    const erros = pendentes.filter(([, valor]) => valorValido(valor) === null);
+    if (erros.length) return setMensagem(`Há ${erros.length} valor(es) inválido(s). Corrija-os antes de salvar.`);
+    if (!pendentes.length) return setMensagem("Não há alterações válidas para salvar.");
+    if (!window.confirm(`Salvar o custo/hora de ${pendentes.length} pessoa(s)?`)) return;
+    const alteracoes = Object.fromEntries(pendentes.map(([nome, valor]) => [nome, valorValido(valor)]));
+    try {
+      updateCustos(alteracoes); setRascunhos({}); setSelecionados(new Set()); setValorMassa("");
+      setMensagem(`${Object.keys(alteracoes).length} registro(s) atualizado(s) com sucesso.`);
+    } catch (e) { setMensagem(`Não foi possível salvar as alterações: ${e.message || "erro desconhecido"}`); }
+  };
+  const cancelar = () => { setRascunhos({}); setSelecionados(new Set()); setValorMassa(""); setMensagem("Alterações pendentes e seleção canceladas."); };
+  const limparFiltros = () => { setQ(""); setFiltroSetor(new Set()); setFiltroDisciplina(new Set()); setFiltroProjeto(new Set()); setPagina(0); };
+  const cabecalho = (chave, titulo) => <th onClick={() => alternarOrdem(chave)} style={{ textAlign: chave === "atual" ? "right" : "left", padding: "8px 10px", color: "#7c8ba1", fontSize: 10.5, textTransform: "uppercase", cursor: "pointer", whiteSpace: "nowrap" }}>{titulo} {ordem.chave === chave ? (ordem.dir === "asc" ? "↑" : "↓") : "↕"}</th>;
+
+  return <div>
+    <Section title="Cadastro de Custo por Hora" right={<input placeholder="Pesquisar por nome..." value={q} onChange={(e) => { setQ(e.target.value); setPagina(0); }} style={{ background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", fontSize: 12, width: 210 }} />}>
+      <p style={{ fontSize: 12, color: "#7c8ba1", marginTop: -4 }}>Selecione pessoas, aplique valores em massa e salve tudo de uma vez. {!loaded && "Carregando custos..."}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: 10, marginBottom: 10, background: "#10151d", border: "1px solid #263241", borderRadius: 4 }}>
+        <MultiSelect label="Disciplina" options={RAW.disciplinas.map((nome) => ({ label: nome, value: nome }))} selected={filtroDisciplina} onChange={(v) => { setFiltroDisciplina(v); setPagina(0); }} />
+        <MultiSelect label="Setor" options={RAW.setores.map((nome) => ({ label: nome, value: nome }))} selected={filtroSetor} onChange={(v) => { setFiltroSetor(v); setPagina(0); }} />
+        <MultiSelect label="Projeto" options={RAW.projetos.map((nome) => ({ label: nome, value: nome }))} selected={filtroProjeto} onChange={(v) => { setFiltroProjeto(v); setPagina(0); }} />
+        <button onClick={limparFiltros} style={btnGhost}>limpar filtros</button><button onClick={() => setSelecionados(new Set())} style={btnGhost}>limpar seleção</button>
+        <span style={{ marginLeft: "auto", color: "#9fb0c6", fontSize: 12, alignSelf: "center" }}>{linhas.length} pessoa(s) · {selecionados.size} selecionada(s)</span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: 10, marginBottom: 10, background: "#141a22", border: "1px solid #2c3a4d", borderRadius: 4 }}>
+        <button onClick={selecionarTodos} style={btnGhost}>{todosSelecionados ? "desmarcar todos" : "selecionar todos"}</button>
+        <input type="number" min="0" step="0.01" value={valorMassa} onChange={(e) => setValorMassa(e.target.value)} placeholder="Novo custo/hora (R$)" style={{ background: "#0c1016", border: "1px solid #2c3a4d", borderRadius: 3, color: "#dbe2ec", padding: "6px 8px", width: 170, fontFamily: "monospace" }} />
+        <button onClick={aplicarEmMassa} style={btnPrimary}>Aplicar valor aos selecionados</button><button onClick={salvar} style={btnPrimary}>Salvar alterações ({pendentes.length})</button><button onClick={cancelar} style={btnGhost}>Cancelar</button>
+      </div>
+      {mensagem && <div style={{ marginBottom: 10, fontSize: 12, color: mensagem.includes("sucesso") ? "#8ebf91" : "#dbc47c" }}>{mensagem}</div>}
+      <div style={{ overflowX: "auto", border: "1px solid #263241", borderRadius: 3 }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "#141a22" }}>
+        <th style={{ padding: "8px 10px", width: 36 }}><input type="checkbox" checked={todosSelecionados} onChange={selecionarTodos} title="Selecionar todos" /></th>{cabecalho("nome", "Pessoa")}{cabecalho("disciplinas", "Disciplina")}{cabecalho("setores", "Setor")}{cabecalho("projetos", "Projeto")}{cabecalho("atual", "Custo atual")}{cabecalho("novo", "Novo custo/hora")}
+      </tr></thead><tbody>{visiveis.map((item) => {
+        const temRascunho = Object.prototype.hasOwnProperty.call(rascunhos, item.nome); const valor = temRascunho ? rascunhos[item.nome] : ""; const editavel = podeEditar(item.nome); const invalido = temRascunho && valorValido(valor) === null;
+        return <tr key={item.nome} style={{ borderBottom: "1px solid #1c242e", background: temRascunho ? "#172a20" : "transparent", opacity: editavel ? 1 : .55 }}><td style={{ padding: "6px 10px", textAlign: "center" }}><input type="checkbox" disabled={!editavel} checked={selecionados.has(item.nome)} onChange={() => alternarSelecionado(item.nome)} /></td><td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{item.nome}{!editavel && <span style={{ color: "#7c8ba1" }}> (sem permissão)</span>}</td><td style={{ padding: "6px 10px" }}>{item.disciplinas || "—"}</td><td style={{ padding: "6px 10px" }}>{item.setores || "—"}</td><td style={{ padding: "6px 10px" }}>{item.projetos || "—"}</td><td style={{ padding: "6px 10px", textAlign: "right", fontFamily: "monospace" }}>{item.atual === "" ? "—" : fmtBRL(item.atual)}</td><td style={{ padding: "6px 10px", textAlign: "right" }}><input type="number" min="0" step="0.01" disabled={!editavel} value={valor} placeholder="0,00" onChange={(e) => setRascunhos((atual) => ({ ...atual, [item.nome]: e.target.value }))} style={{ background: invalido ? "#3a1d1d" : "#0c1016", border: `1px solid ${invalido ? "#e08787" : "#2c3a4d"}`, borderRadius: 3, color: "#dbe2ec", padding: "4px 7px", width: 105, textAlign: "right", fontFamily: "monospace" }} /></td></tr>;
+      })}</tbody></table></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 9, fontSize: 11.5, color: "#7c8ba1" }}><span>Página {paginaAtual + 1} de {totalPaginas} · {visiveis.length} de {linhas.length} pessoas</span><span><button disabled={paginaAtual === 0} onClick={() => setPagina((p) => Math.max(0, p - 1))} style={btnGhost}>anterior</button> <button disabled={paginaAtual >= totalPaginas - 1} onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))} style={btnGhost}>próxima</button></span></div>
+    </Section>
+  </div>;
 }
 
 function RevisaoView() {
