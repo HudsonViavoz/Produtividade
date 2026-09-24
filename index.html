@@ -147,6 +147,14 @@ function isProdRow(r) {
   return r[7] === 0 || PRODUCTIVE_TIPOS.has(r[7]);
 }
 
+// Definição única e oficial de "Tempo Improdutivo": somente Falta e Atestado.
+// Nenhuma outra categoria (Férias, Feriado, Treinamento, Reunião, Gestão, Serviço Interno)
+// deve ser somada aqui, mesmo sendo período sem execução direta de projeto.
+const TIPOS_TEMPO_IMPRODUTIVO = new Set([4, 6]); // 4 = Atestado, 6 = Falta
+function isTempoImprodutivo(r) {
+  return TIPOS_TEMPO_IMPRODUTIVO.has(r[7]);
+}
+
 function rowCusto(r, custoMap) {
   if (ZERO_COST_TIPOS.has(r[7])) return { custo: 0, isProdCost: true };
   const custoHora = custoMap[RAW.colaboradores[r[1]]] || 0;
@@ -307,7 +315,7 @@ const btnPrimary = { background: "#2E5C8A", border: "1px solid #3E7CB1", color: 
 
 const NAV = [
   ["dashboard", "Dashboard"], ["projetos", "Projetos"], ["funcionarios", "Funcionários"],
-  ["improdutivo", "Tempo Indireto"], ["custos", "Custos"], ["mensal", "Mensal"],
+  ["improdutivo", "Tempo Improdutivo"], ["custos", "Custos"], ["mensal", "Mensal"],
   ["setores", "Setores"], ["disciplinas", "Disciplinas"], ["tarefas", "Tarefas"],
   ["alertas", "Alertas"], ["custohora", "Custo/Hora"], ["revisao", "Revisão"],
 ];
@@ -449,18 +457,21 @@ export default function App() {
   }, [filters, dataVersion]);
 
   const kpis = useMemo(() => {
-    let horas = 0, prod = 0, custo = 0, custoProd = 0, custoNaoProd = 0;
+    let horas = 0, prod = 0, custo = 0, custoProd = 0, custoNaoProd = 0, tempoImprodutivo = 0;
     const colabs = new Set(), setores = new Set(), projetos = new Set(), discs = new Set();
     for (const r of filteredRows) {
       horas += r[6];
       const { custo: c, isProdCost } = rowCusto(r, custoMap);
       custo += c;
       if (isProdRow(r)) prod += r[6];
+      if (isTempoImprodutivo(r)) tempoImprodutivo += r[6];
       if (isProdCost) custoProd += c; else custoNaoProd += c;
       colabs.add(r[1]); setores.add(r[2]); discs.add(r[4]);
       if (!PLACEHOLDER_PROJ_IDX.has(r[3])) projetos.add(r[3]);
     }
-    const naoProd = horas - prod;
+    // Tempo Improdutivo = Falta + Atestado (isTempoImprodutivo), mesma regra usada na aba "Tempo Improdutivo",
+    // para garantir que o Dashboard e a aba sempre mostrem o mesmo número.
+    const naoProd = tempoImprodutivo;
     return { horas, prod, naoProd, custo, custoProd, custoNaoProd, colabs: colabs.size, setores: setores.size, projetos: projetos.size, discs: discs.size };
   }, [filteredRows, custoMap, dataVersion]);
 
@@ -635,7 +646,7 @@ function DashboardView({ filteredRows, kpis, custoMap, hasCusto }) {
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <KpiCard label="HH Total" value={fmtH(kpis.horas)} />
           <KpiCard label="HH Produtivo" value={fmtH(kpis.prod)} accent="#5C8A5C" />
-          <KpiCard label="HH Improdutivo" value={fmtH(kpis.naoProd)} accent="#A13D3D" />
+          <KpiCard label="Tempo Improdutivo" value={fmtH(kpis.naoProd)} accent="#A13D3D" />
           <KpiCard label="Produtividade" value={fmtPct(kpis.horas ? kpis.prod / kpis.horas : 0)} accent="#3E7CB1" />
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
@@ -798,7 +809,8 @@ function FuncionariosView({ filteredRows, custoMap, hasCusto }) {
 }
 
 function ImprodutivoView({ filteredRows, custoMap, hasCusto }) {
-  const naoProd = filteredRows.filter((r) => !isProdRow(r));
+  // Tempo Improdutivo = somente Falta + Atestado (isTempoImprodutivo) — mesma regra usada no Dashboard.
+  const naoProd = filteredRows.filter((r) => isTempoImprodutivo(r));
   const totalHoras = filteredRows.reduce((s, r) => s + r[6], 0) || 1;
   const totalNaoProd = naoProd.reduce((s, r) => s + r[6], 0);
 
@@ -829,14 +841,14 @@ function ImprodutivoView({ filteredRows, custoMap, hasCusto }) {
 
   return (
     <div>
-      <Section title="Painel de Tempo Indireto">
+      <Section title="Painel de Tempo Improdutivo">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-          <KpiCard label="Total Improdutivo" value={fmtH(totalNaoProd)} accent="#A13D3D" />
+          <KpiCard label="Tempo Improdutivo" value={fmtH(totalNaoProd)} accent="#A13D3D" />
           <KpiCard label="% do Total" value={fmtPct(totalNaoProd / totalHoras)} accent="#A13D3D" />
-          {hasCusto && <KpiCard label="Custo Improdutivo" value={fmtBRL(custoRealImprodutivo)} accent="#A13D3D" />}
+          {hasCusto && <KpiCard label="Custo do Tempo Improdutivo" value={fmtBRL(custoRealImprodutivo)} accent="#A13D3D" />}
         </div>
         <div style={{ fontSize: 11, color: "#5c6b80", marginBottom: 12 }}>
-          Regra: Serviço Interno, Reunião e Gestão contam como horas e custo produtivos (não aparecem aqui). Férias, Feriado e Treinamento continuam improdutivas em horas, mas não geram custo.
+          Regra: Tempo Improdutivo = Falta + Atestado, exclusivamente. Nenhuma outra categoria (Férias, Feriado, Treinamento, Reunião, Gestão, Serviço Interno) entra neste indicador, mesmo sendo período sem execução direta de projeto.
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <ChartBox title="Distribuição por categoria">
@@ -858,7 +870,7 @@ function ImprodutivoView({ filteredRows, custoMap, hasCusto }) {
           </ChartBox>
         </div>
       </Section>
-      <Section title="Categorias de horas indiretas">
+      <Section title="Categorias de Tempo Improdutivo">
         <DataTable
           columns={[
             { key: "tipo", label: "Categoria" },
