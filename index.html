@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel de Produtividade — Viavoz</title>
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Painel de produtividade e custos — Viavoz">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="styles.css?v=202610072030">
+</head>
+<body>
+
+<!-- ══ CARREGANDO ══ -->
+<div id="carregando" class="oculto" role="status" aria-live="polite">
+  <div class="spin" aria-hidden="true"></div>
+  <span id="carregando-txt">Carregando…</span>
+</div>
+
+<!-- ══ LOGIN ══ -->
+<div id="tela-login">
+  <form class="login-card" id="form-login" novalidate>
+    <div class="login-marca">Viavoz</div>
+    <h1>Painel de Produtividade</h1>
+    <p class="sub">Entre com a mesma conta do Registro de Horas.</p>
+
+    <label class="campo" for="in-email">E-mail</label>
+    <input type="email" id="in-email" autocomplete="username"
+           placeholder="nome@viavoz.com" spellcheck="false" required>
+
+    <label class="campo" for="in-senha">Senha</label>
+    <input type="password" id="in-senha" autocomplete="current-password"
+           placeholder="••••••••" required>
+
+    <button type="submit" class="primario" id="btn-entrar">Entrar</button>
+    <div class="erro oculto" id="erro-login" role="alert"></div>
+
+    <p class="login-rodape">
+      Painel somente leitura. Nada é gravado ou alterado no banco.
+    </p>
+  </form>
+</div>
+
+<!-- ══ APLICAÇÃO ══ -->
+<div id="app" class="oculto">
+
+  <!-- cabeçalho + abas viajam juntos na rolagem -->
+  <div class="topo-fixo">
+
+    <header class="topo">
+      <div class="topo-marca">
+        <h1>Painel de Produtividade</h1>
+        <span class="selo" id="selo-papel">—</span>
+      </div>
+
+      <div class="topo-info">
+        <span class="muted" id="resumo-base"></span>
+        <span id="txt-atualizado"></span>
+      </div>
+
+      <div class="topo-dir">
+        <span class="selo" id="selo-tempo-real" title="Estado da conexão ao vivo">⏱ periódico</span>
+        <button id="btn-atualizar" class="secundario" title="Reler os lançamentos agora">
+          <span class="ico-girar" aria-hidden="true">⟳</span>
+          <span class="rotulo-botao">Atualizar</span>
+        </button>
+        <button id="btn-sair" class="ghost" title="Encerrar a sessão">Sair</button>
+      </div>
+    </header>
+
+    <div class="abas-envelope">
+      <nav class="abas" id="nav-abas" aria-label="Seções do painel"></nav>
+    </div>
+
+  </div>
+
+  <div class="wrap">
+
+    <!-- aviso de leitura incompleta / modo espelho (preenchido pelo app.js) -->
+    <div id="aviso-integridade" class="aviso oculto" role="status"></div>
+
+    <!-- ══ FILTROS ══ -->
+    <section class="filtros barra-filtros" aria-label="Filtros">
+
+      <!-- principais: recorte de tempo e busca livre -->
+      <div class="filtros-grupo">
+
+        <div class="campo-filtro">
+          <label for="f-periodo">Período</label>
+          <select id="f-periodo" title="Atalhos de período">
+            <option value="">personalizado…</option>
+            <option value="mes">Este mês</option>
+            <option value="mes-1">Mês passado</option>
+            <option value="90">Últimos 90 dias</option>
+            <option value="ano">Este ano</option>
+            <option value="tudo">Tudo</option>
+          </select>
+        </div>
+
+        <div class="campo-filtro campo-datas">
+          <label for="f-de">Intervalo de datas</label>
+          <div class="par-datas">
+            <input type="date" id="f-de" title="Data inicial" aria-label="Data inicial">
+            <span class="sep">até</span>
+            <input type="date" id="f-ate" title="Data final" aria-label="Data final">
+          </div>
+        </div>
+
+        <div class="campo-filtro campo-busca">
+          <label for="f-busca">Buscar</label>
+          <input type="text" id="f-busca" placeholder="tarefa ou observação…">
+        </div>
+
+      </div>
+
+      <!-- secundários: recortes por dimensão -->
+      <div class="filtros-grupo">
+
+        <div class="campo-filtro so-admin">
+          <label for="f-colab">Colaborador</label>
+          <select id="f-colab" class="so-admin"><option value="">todos</option></select>
+        </div>
+
+        <div class="campo-filtro so-admin">
+          <label for="f-setor">Setor</label>
+          <select id="f-setor" class="so-admin"><option value="">todos</option></select>
+        </div>
+
+        <div class="campo-filtro">
+          <label for="f-obra">Obra / Projeto</label>
+          <select id="f-obra"><option value="">todas</option></select>
+        </div>
+
+        <div class="campo-filtro">
+          <label for="f-disc">Disciplina</label>
+          <select id="f-disc"><option value="">todas</option></select>
+        </div>
+
+        <div class="campo-filtro">
+          <label for="f-tipo">Tipo de hora</label>
+          <select id="f-tipo"><option value="">todos</option></select>
+        </div>
+
+      </div>
+
+      <!-- ações e estado do resultado -->
+      <div class="filtros-acoes">
+        <label class="opcao so-admin" id="lbl-modo-sistema"
+               title="Usa os mesmos critérios do Registro de Horas: conta serviço interno e reunião como obra, soma as obras paradas e mostra as horas em HH:MM">
+          <input type="checkbox" id="chk-modo-sistema">
+          igual ao sistema
+        </label>
+
+        <button id="btn-limpar" class="ghost">limpar filtros</button>
+
+        <span id="contador"></span>
+
+        <button id="btn-excel" class="exportar" title="Baixar o resultado filtrado em Excel">
+          <span aria-hidden="true">⤓</span>
+          <span class="rotulo-botao">Excel</span>
+        </button>
+      </div>
+
+    </section>
+
+    <!-- ══ CONTEÚDO DAS ABAS ══ -->
+    <div id="conteudo"></div>
+
+    <p class="rodape-nota">
+      Painel somente leitura — não grava nem altera nada no banco.
+      A classificação do tipo de hora é deduzida do nome da obra, porque a tabela
+      <code>registros</code> ainda não tem um campo próprio para isso.
+    </p>
+
+  </div>
+</div>
+
+<!-- ══ DETALHE DA OBRA ══ -->
+<div id="detalhe" class="oculto" role="dialog" aria-modal="true" aria-labelledby="detalhe-titulo">
+  <div id="detalhe-caixa">
+    <div id="detalhe-topo">
+      <h2 id="detalhe-titulo"></h2>
+      <button id="detalhe-fechar" title="Fechar (Esc)" aria-label="Fechar">✕</button>
+    </div>
+    <div id="detalhe-corpo"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="app.js?v=202610072030"></script>
+</body>
+</html>
