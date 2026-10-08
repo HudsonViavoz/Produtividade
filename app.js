@@ -115,6 +115,7 @@ const S = {
   colisoesCadastro: [],
   nomesUnificados: [],   // pessoas que trocaram de nome no cadastro
   editandoAumento: null, // nome de quem está com o formulário de aumento aberto
+  custoNaTela: null,     // lista de nomes visível na aba Custo/Hora
   lideres: null,         // quem fica fora das contas
   filtros: { de:'', ate:'', colab:'', setor:'', obra:'', disc:'', tipo:'', busca:'' },
   obrasSel: new Set(),   // filtro de obra aceita várias ao mesmo tempo
@@ -1757,16 +1758,27 @@ function telaCustos(linhas) {
    dessa pessoa. Tirar da lista faria o custo de meses passados encolher
    sem aviso. Por isso vão em duas listas separadas, cada uma com seu
    propósito dito em voz alta. */
-function nomesParaCusto() {
-  const comHoras = new Set(S.linhas.map(r => r.colaborador).filter(Boolean));
+function nomesParaCusto(base) {
+  const linhas = base || S.linhas;
+  const comHoras = new Set(linhas.map(r => r.colaborador).filter(Boolean));
   const perfilDe = new Map();
   S.perfis.forEach(p => { if (p.nome) perfilDe.set(p.nome, p); });
   const ehAtivo = (p) => (p.status || 'ATIVO').toUpperCase() === 'ATIVO';
 
   const ativos = new Set();
-  S.perfis.forEach(p => { if (ehAtivo(p) && !ehLider(p.nome)) ativos.add(p.nome); });
-  // quem lança mas não tem cadastro: tem custo, então não pode ficar de fora
-  comHoras.forEach(n => { if (!perfilDe.has(n)) ativos.add(n); });
+  // Com recorte (uma disciplina, um setor, uma obra) a lista passa a ser
+  // "quem trabalhou nisso", e não o quadro inteiro — senão filtrar não
+  // encurtaria nada e o objetivo do filtro se perderia.
+  if (base) {
+    comHoras.forEach(n => {
+      const p = perfilDe.get(n);
+      if (!ehLider(n) && (!p || ehAtivo(p))) ativos.add(n);
+    });
+  } else {
+    S.perfis.forEach(p => { if (ehAtivo(p) && !ehLider(p.nome)) ativos.add(p.nome); });
+    // quem lança mas não tem cadastro: tem custo, então não pode ficar de fora
+    comHoras.forEach(n => { if (!perfilDe.has(n)) ativos.add(n); });
+  }
 
   /* Regra simples e à prova de caso novo: QUEM TEM HORA NO PAINEL PRECISA
      DE VALOR/HORA. Senão aquelas horas custam zero em silêncio.
@@ -1783,10 +1795,21 @@ function nomesParaCusto() {
 }
 
 function telaCustoHora(linhas) {
-  const { ativos, inativos, semCadastro } = nomesParaCusto();
+  /* A tela respeita os filtros do topo. Escolher uma disciplina (ou setor,
+     ou obra) encurta a lista para quem trabalhou nisso, e as horas passam a
+     ser as daquele recorte — é assim que dá para cadastrar por time em vez
+     de rolar 87 nomes toda vez. Sem filtro, continua mostrando o quadro
+     inteiro, inclusive quem nunca lançou. */
+  const recorte = [S.filtros.disc, S.filtros.setor, S.filtros.colab,
+                   S.obrasSel.size ? [...S.obrasSel].join(', ') : '']
+    .filter(Boolean);
+  const filtrando = recorte.length > 0;
+  const base = filtrando ? linhas : S.linhas;
+
+  const { ativos, inativos, semCadastro } = nomesParaCusto(filtrando ? base : null);
 
   const horasDe = {};
-  for (const r of S.linhas) horasDe[r.colaborador] = (horasDe[r.colaborador] || 0) + r.horas;
+  for (const r of base) horasDe[r.colaborador] = (horasDe[r.colaborador] || 0) + r.horas;
 
   let html = '<div class="box" style="border-color:rgba(210,150,63,.38);margin-bottom:16px">' +
     '<div style="color:var(--warning-text);font-weight:600;margin-bottom:5px">⚠ Informação confidencial</div>' +
@@ -1797,12 +1820,28 @@ function telaCustoHora(linhas) {
     'Nunca coloque esse arquivo na pasta do site.' +
     '</div></div>';
 
+  if (filtrando) {
+    html += '<div class="box" style="border-color:rgba(77,143,214,.34);margin-bottom:16px">' +
+      '<div style="font-weight:600;color:var(--primary-hover);margin-bottom:4px">' +
+      'Lista recortada pelo filtro</div>' +
+      '<div class="muted" style="font-size:12.5px">Mostrando só quem lançou hora em <b>' +
+      esc(recorte.join('</b> · <b>')) + '</b>. As horas e o custo da tabela são os ' +
+      'desse recorte, não os totais da pessoa.<br>' +
+      'O valor/hora que você digitar vale para a pessoa inteira — ele não é por ' +
+      'disciplina. Limpe os filtros para ver o quadro completo.</div></div>';
+  }
+
+  // o preenchimento em massa tem que agir sobre ESTA lista, não sobre o
+  // quadro inteiro — senão o botão diz "todos os 12" e mexe em 87
+  S.custoNaTela = ativos;
+
   const cadastradosAtivos = ativos.filter(n => CUSTOS.valorDe(n)).length;
   const vazios  = ativos.filter(n => !CUSTOS.valorDe(n));
   const semVal  = inativos.filter(n => !CUSTOS.valorDe(n)).length;
 
   html += '<div class="kpis">' +
-    kpi('Colaboradores ativos', fmtN(ativos.length), 'vindos do cadastro, não dos lançamentos') +
+    kpi(filtrando ? 'No recorte' : 'Colaboradores ativos', fmtN(ativos.length),
+        filtrando ? 'lançaram hora no filtro atual' : 'vindos do cadastro, não dos lançamentos') +
     kpi('Com valor cadastrado', fmtN(cadastradosAtivos), 'de ' + fmtN(ativos.length) + ' ativos',
         cadastradosAtivos === ativos.length ? 'ok' : 'warn') +
     kpi('Faltando', fmtN(vazios.length), 'ativos ainda sem valor/hora',
@@ -1832,7 +1871,7 @@ function telaCustoHora(linhas) {
   /* Custo real da pessoa: cada hora pelo valor que valia no dia dela.
      Com um valor único dá o mesmo que horas × valor, como antes. */
   const custoDe = {};
-  for (const r of S.linhas) {
+  for (const r of base) {
     if (!TIPOS[r._tipo].geraCusto) continue;
     custoDe[r.colaborador] = (custoDe[r.colaborador] || 0)
       + r.horas * CUSTOS.valorDe(r.colaborador, r.data);
@@ -1889,10 +1928,13 @@ function telaCustoHora(linhas) {
         '</tr>';
     }).join('') + '</tbody></table></div>';
 
-  html += secao('Colaboradores ativos',
+  html += secao(filtrando ? 'Colaboradores no recorte' : 'Colaboradores ativos',
     box(tabelaCusto(ativos)),
-    'a lista vem do cadastro — quem nunca lançou hora também aparece, ' +
-    'porque continua custando · digite e saia do campo para salvar');
+    (filtrando
+      ? 'só quem lançou hora no filtro atual · horas e custo são deste recorte'
+      : 'a lista vem do cadastro — quem nunca lançou hora também aparece, ' +
+        'porque continua custando') +
+    ' · digite e saia do campo para salvar');
 
   if (inativos.length) {
     html += secao('Fora da lista acima, mas com horas lançadas',
@@ -3408,9 +3450,10 @@ function ligarEventos() {
       const v = Number(String(bruto).replace(',', '.'));
       if (!isFinite(v) || v <= 0) { alert('Digite um valor válido. Ex: 95 ou 95,50'); return; }
 
-      // mesma lista da tela: ativos do cadastro, nunca os inativos —
-      // sobrescrever o valor de quem saiu mudaria o custo de meses fechados
-      const nomes = nomesParaCusto().ativos;
+      // mesma lista que está na tela — inclusive quando ela está recortada
+      // por disciplina, setor ou obra. Nunca os inativos: sobrescrever o
+      // valor de quem saiu mudaria o custo de meses já fechados.
+      const nomes = S.custoNaTela || nomesParaCusto().ativos;
       const alvos = massaTodos ? nomes : nomes.filter(n => !CUSTOS.valorDe(n));
       if (!alvos.length) { alert('Ninguém para preencher.'); return; }
 
