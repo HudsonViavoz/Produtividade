@@ -114,8 +114,10 @@ const S = {
   modoSistema: false,  // exibir com os mesmos critérios do Registro de Horas
   colisoesCadastro: [],
   nomesUnificados: [],   // pessoas que trocaram de nome no cadastro
+  editandoAumento: null, // nome de quem está com o formulário de aumento aberto
   lideres: null,         // quem fica fora das contas
   filtros: { de:'', ate:'', colab:'', setor:'', obra:'', disc:'', tipo:'', busca:'' },
+  obrasSel: new Set(),   // filtro de obra aceita várias ao mesmo tempo
 };
 
 const $  = (s) => document.querySelector(s);
@@ -146,6 +148,20 @@ const CUSTOS = {
   CHAVE: 'viavoz_custo_hora',
   mapa: {},
 
+  /* ── FORMATO GRAVADO ──────────────────────────────────────────
+     Dois formatos convivem de propósito, e o antigo continua válido:
+
+       "FULANO":  95                                    valor único
+       "CICLANO": [ {v:80}, {v:100, de:"2026-09-01"} ]   com aumento
+
+     Quem nunca cadastrar aumento nunca vê a segunda forma, e o
+     arquivo exportado antes desta mudança continua importando.
+
+     A entrada SEM `de` é o valor base: vale para tudo que vier antes
+     da primeira data. É ela que o campo da tela edita, e é ela que o
+     preenchimento em massa mexe — assim nenhum histórico é apagado
+     por engano ao aplicar um valor para todo mundo. */
+
   carregar() {
     try {
       const bruto = localStorage.getItem(this.CHAVE)
@@ -160,14 +176,92 @@ const CUSTOS = {
     catch (e) { alert('Não foi possível salvar neste navegador.'); }
   },
 
+  // sempre devolve a lista de faixas, mesmo quando o gravado é um número
+  faixas(nome) {
+    const g = this.mapa[nome];
+    if (g == null) return [];
+    if (typeof g === 'number') return [{ v: g }];
+    if (Array.isArray(g)) return g.filter(f => f && isFinite(Number(f.v)) && Number(f.v) > 0);
+    return [];
+  },
+
+  // só as faixas com data, da mais nova para a mais antiga
+  aumentos(nome) {
+    return this.faixas(nome).filter(f => f.de)
+      .sort((a, b) => String(b.de).localeCompare(String(a.de)));
+  },
+
+  base(nome) {
+    const f = this.faixas(nome).find(x => !x.de);
+    return f ? Number(f.v) : 0;
+  },
+
+  /* Valor que valia naquele dia.
+     Sem data, devolve o mais recente — é o que as telas de conferência
+     ("essa pessoa já tem valor?") precisam. */
+  valorDe(nome, data) {
+    const fs = this.faixas(nome);
+    if (!fs.length) return 0;
+    if (!data) {
+      const comData = fs.filter(f => f.de).sort((a, b) => String(a.de).localeCompare(String(b.de)));
+      return Number((comData.length ? comData[comData.length - 1] : fs.find(f => !f.de) || fs[0]).v) || 0;
+    }
+    let escolhida = fs.find(f => !f.de) || null;
+    for (const f of fs) {
+      if (!f.de || String(f.de) > String(data)) continue;
+      if (!escolhida || !escolhida.de || String(f.de) > String(escolhida.de)) escolhida = f;
+    }
+    return escolhida ? Number(escolhida.v) || 0 : 0;
+  },
+
+  // grava o valor BASE, preservando os aumentos já cadastrados
   definir(nome, valor) {
     const v = Number(String(valor).replace(',', '.'));
-    if (!valor || !isFinite(v) || v <= 0) delete this.mapa[nome];
-    else this.mapa[nome] = v;
+    const aum = this.aumentos(nome);
+    if (!valor || !isFinite(v) || v <= 0) {
+      if (aum.length) this.mapa[nome] = aum;        // some o base, ficam os aumentos
+      else delete this.mapa[nome];
+    } else if (aum.length) {
+      this.mapa[nome] = [{ v }, ...aum];
+    } else {
+      this.mapa[nome] = v;                          // forma simples, igual a antes
+    }
     this.salvar();
   },
 
-  valorDe(nome) { return this.mapa[nome] || 0; },
+  // acrescenta (ou substitui) um aumento com data
+  definirAumento(nome, valor, de) {
+    const v = Number(String(valor).replace(',', '.'));
+    if (!isFinite(v) || v <= 0 || !de) return false;
+    const base = this.base(nome);
+    const aum  = this.aumentos(nome).filter(f => f.de !== de);
+    const lista = (base ? [{ v: base }] : []).concat(aum, [{ v, de }]);
+    this.mapa[nome] = lista;
+    this.salvar();
+    return true;
+  },
+
+  tirarAumento(nome, de) {
+    const base = this.base(nome);
+    const aum  = this.aumentos(nome).filter(f => f.de !== de);
+    if (!aum.length) { if (base) this.mapa[nome] = base; else delete this.mapa[nome]; }
+    else this.mapa[nome] = (base ? [{ v: base }] : []).concat(aum);
+    this.salvar();
+  },
+
+  /* Média ponderada pelas horas de cada faixa — o "valor único" que
+     alguém pode pedir para reportar, sem o painel deixar de calcular
+     certo por dentro. Devolve 0 se a pessoa não tem aumento. */
+  mediaPonderada(nome, linhas) {
+    if (!this.aumentos(nome).length) return 0;
+    let horas = 0, total = 0;
+    for (const r of linhas) {
+      if (r.colaborador !== nome || !TIPOS[r._tipo].geraCusto) continue;
+      horas += r.horas;
+      total += r.horas * this.valorDe(nome, r.data);
+    }
+    return horas ? total / horas : 0;
+  },
 
   quantos() { return Object.keys(this.mapa).length; },
 
@@ -189,11 +283,16 @@ const CUSTOS = {
         if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('formato');
         let n = 0;
         for (const k of Object.keys(obj)) {
-          const v = Number(obj[k]);
-          if (isFinite(v) && v > 0) { this.mapa[k] = v; n++; }
+          const g = obj[k];
+          if (typeof g === 'number' && isFinite(g) && g > 0) { this.mapa[k] = g; n++; }
+          else if (Array.isArray(g)) {
+            const limpa = g.filter(f => f && isFinite(Number(f.v)) && Number(f.v) > 0)
+                           .map(f => (f.de ? { v: Number(f.v), de: String(f.de) } : { v: Number(f.v) }));
+            if (limpa.length) { this.mapa[k] = limpa; n++; }
+          }
         }
         this.salvar();
-        alert(n + ' valor(es) importado(s).');
+        alert(n + ' colaborador(es) importado(s).');
         aoTerminar();
       } catch (e) {
         alert('Arquivo inválido. Use um arquivo gerado pelo botão Exportar.');
@@ -620,6 +719,25 @@ function unificarNomes() {
 /* ───────────────────────────────────────────────────────────────
    6. FILTROS
    ─────────────────────────────────────────────────────────────── */
+/* Etiquetas das obras escolhidas.
+   Com 296 obras, um <select multiple> seria impraticável — a pessoa teria
+   que segurar Ctrl e rolar. Aqui o select continua simples: escolher
+   adiciona à lista, e cada escolha vira uma etiqueta que dá para remover. */
+function desenharChipsObra() {
+  const caixa = $('#chips-obra');
+  if (!caixa) return;
+  const n = S.obrasSel.size;
+  caixa.classList.toggle('oculto', !n);
+  if (!n) { caixa.innerHTML = ''; return; }
+  caixa.innerHTML =
+    [...S.obrasSel].sort((a, b) => a.localeCompare(b, 'pt-BR')).map(o =>
+      '<span class="chip">' + esc(o) +
+      '<button type="button" class="chip-x" data-tirar-obra="' + esc(o) + '" ' +
+      'title="Tirar do filtro" aria-label="Tirar ' + esc(o) + ' do filtro">✕</button></span>').join('') +
+    (n > 1 ? '<button type="button" class="chip-limpar" id="btn-limpar-obras">' +
+             'limpar as ' + n + '</button>' : '');
+}
+
 function preencherFiltros() {
   const unicos = (f) => [...new Set(S.linhas.map(f).filter(Boolean))]
     .sort((a,b) => String(a).localeCompare(String(b), 'pt-BR'));
@@ -649,7 +767,7 @@ function lerFiltros() {
     ate:   $('#f-ate').value,
     colab: $('#f-colab').value,
     setor: $('#f-setor').value,
-    obra:  $('#f-obra').value,
+    obra:  $('#f-obra').value,   // mantido: a seleção múltipla vive em S.obrasSel
     disc:  $('#f-disc').value,
     tipo:  $('#f-tipo').value,
     busca: normalizar($('#f-busca').value),
@@ -663,7 +781,8 @@ function filtrar() {
     if (f.ate   && r.data > f.ate)            return false;
     if (f.colab && r.colaborador !== f.colab) return false;
     if (f.setor && r.setor !== f.setor)       return false;
-    if (f.obra  && r.obra !== f.obra)         return false;
+    // obra aceita várias: vazio = todas; com itens = união do que foi marcado
+    if (S.obrasSel.size && !S.obrasSel.has(r.obra)) return false;
     if (f.disc  && r.disciplina !== f.disc)   return false;
     if (f.tipo  && r._tipo !== f.tipo)        return false;
     if (f.busca && !normalizar(r.tarefa + ' ' + r.obs + ' ' + r.obra).includes(f.busca)) return false;
@@ -756,7 +875,9 @@ function resumir(linhas) {
     else                    { fora  += r.horas; }   // férias e feriado: fora de tudo
 
     if (t.geraCusto) {
-      const vh = CUSTOS.valorDe(r.colaborador);
+      // a data importa: se a pessoa teve aumento, cada hora usa o valor
+      // que valia no dia em que foi trabalhada
+      const vh = CUSTOS.valorDe(r.colaborador, r.data);
       if (vh) {
         const c = r.horas * vh;
         if (g === 'prod')       custoProd  += c;
@@ -1239,9 +1360,14 @@ function telaAgrupada(linhas, rotulo, chaveFn, idTab, soProjetos) {
     }
     const divergentes = [...porNorm.values()].filter(v => v.length > 1);
 
+    // guarda o que está na tela para o Excel sair exatamente igual ao visto
+    S.obrasNaTela = dados;
+
     html += secao('Obras',
       box(tabela(idTab, colsObra, dados, 20, { campo: 'horas', desc: true }, true)),
-      fmtN(dados.length) + ' obras no filtro atual');
+      fmtN(dados.length) + ' obras no filtro atual ' +
+      '<button id="btn-excel-obras" class="exportar" style="margin-left:10px">' +
+      '⤓ Excel das obras</button>');
 
     if (S.modoSistema) {
       html += '<div class="box" style="border-color:rgba(210,150,63,.38);margin:-18px 0 22px">' +
@@ -1703,24 +1829,63 @@ function telaCustoHora(linhas) {
     '<button id="btn-cst-limpar" style="margin-left:auto">apagar tudo</button>' +
     '</div>';
 
+  /* Custo real da pessoa: cada hora pelo valor que valia no dia dela.
+     Com um valor único dá o mesmo que horas × valor, como antes. */
+  const custoDe = {};
+  for (const r of S.linhas) {
+    if (!TIPOS[r._tipo].geraCusto) continue;
+    custoDe[r.colaborador] = (custoDe[r.colaborador] || 0)
+      + r.horas * CUSTOS.valorDe(r.colaborador, r.data);
+  }
+
   const tabelaCusto = (lista) => '<div class="tabela-rolagem"><table><thead><tr>' +
     '<th>Colaborador</th><th class="num">Horas (total)</th>' +
     '<th class="num">R$ / hora</th><th class="num">Custo acumulado</th>' +
     '</tr></thead><tbody>' +
     lista.map(n => {
-      const v = CUSTOS.valorDe(n);
-      const h = horasDe[n] || 0;
+      const base = CUSTOS.base(n);
+      const aum  = CUSTOS.aumentos(n);
+      const h    = horasDe[n] || 0;
+      const temAlgum = base || aum.length;
+
+      // faixas já cadastradas, da mais nova para a mais antiga
+      const chips = aum.map(f =>
+        '<span class="chip chip-sal">' + fmtBRL2(f.v) +
+        '<span class="chip-de">desde ' + fmtData(f.de) + '</span>' +
+        '<button type="button" class="chip-x" data-tirar-aumento="' + esc(n) + '" ' +
+        'data-de="' + esc(f.de) + '" title="Tirar este aumento">✕</button></span>').join('');
+
+      // formulário aberto só para quem foi clicado
+      const form = S.editandoAumento === n
+        ? '<div class="form-aumento">' +
+            '<input type="text" inputmode="decimal" id="in-aum-valor" placeholder="novo R$/h" ' +
+              'style="width:92px;text-align:right;font-family:var(--mono)">' +
+            '<input type="date" id="in-aum-de" style="width:142px">' +
+            '<button class="secundario" id="btn-aum-salvar" data-nome="' + esc(n) + '">salvar</button>' +
+            '<button class="ghost" id="btn-aum-cancelar">cancelar</button>' +
+          '</div>'
+        : '';
+
       return '<tr>' +
         '<td>' + esc(n) +
           (semCadastro.includes(n)
-            ? ' <span class="tag fora">sem cadastro</span>' : '') + '</td>' +
+            ? ' <span class="tag fora">sem cadastro</span>' : '') +
+          (aum.length ? ' <span class="tag indir">' + aum.length + ' aumento' +
+                        (aum.length > 1 ? 's' : '') + '</span>' : '') + '</td>' +
         '<td class="num">' + fmtHoras(h) + '</td>' +
-        '<td class="num" style="width:150px">' +
+        '<td class="num" style="width:230px">' +
           '<input type="text" inputmode="decimal" class="cst-in" data-nome="' + esc(n) + '" ' +
-          'value="' + (v ? String(v).replace('.', ',') : '') + '" placeholder="0,00" ' +
+          'value="' + (base ? String(base).replace('.', ',') : '') + '" placeholder="0,00" ' +
           'style="width:110px;text-align:right;font-family:var(--mono)">' +
+          '<button class="ghost btn-aum" data-abrir-aumento="' + esc(n) + '" ' +
+          'title="Registrar um aumento com data">＋ aumento</button>' +
+          (chips ? '<div class="chips-sal">' + chips + '</div>' : '') + form +
         '</td>' +
-        '<td class="num">' + (v ? fmtBRL(v * h) : '—') + '</td>' +
+        '<td class="num">' + (temAlgum ? fmtBRL(custoDe[n] || 0) : '—') +
+          (aum.length
+            ? '<div class="muted" style="font-size:10.5px">média ' +
+              fmtBRL2(CUSTOS.mediaPonderada(n, S.linhas)) + '/h</div>'
+            : '') + '</td>' +
         '</tr>';
     }).join('') + '</tbody></table></div>';
 
@@ -1955,7 +2120,7 @@ function telaResultado(linhas) {
     if (!porObra.has(r.obra)) porObra.set(r.obra, { horas: 0, custo: 0, pessoas: new Set() });
     const o = porObra.get(r.obra);
     o.horas += r.horas;
-    o.custo += r.horas * CUSTOS.valorDe(r.colaborador);
+    o.custo += r.horas * CUSTOS.valorDe(r.colaborador, r.data);
     o.pessoas.add(r.colaborador);
   }
 
@@ -2040,7 +2205,7 @@ function telaResultado(linhas) {
   const perdaPorPessoa = new Map();
   for (const r of linhas) {
     if (TIPOS[r._tipo].grupo !== 'absen') continue;
-    const vh = CUSTOS.valorDe(r.colaborador);
+    const vh = CUSTOS.valorDe(r.colaborador, r.data);
     if (!perdaPorPessoa.has(r.colaborador))
       perdaPorPessoa.set(r.colaborador, { horas: 0, custo: 0, falta: 0, atestado: 0 });
     const p = perdaPorPessoa.get(r.colaborador);
@@ -2805,6 +2970,113 @@ function render() {
 /* ───────────────────────────────────────────────────────────────
    12. EXPORTAÇÃO
    ─────────────────────────────────────────────────────────────── */
+/* Planilha das obras — uma linha por obra, com tudo o que a tela mostra
+   mais o que fica no cadastro. Serve para a análise fora do painel, onde
+   dá para cruzar com planilha de contrato, medição, etc.
+
+   Duas abas: as obras com hora lançada e as cadastradas que estão paradas.
+   Sem a segunda, uma obra que ninguém tocou some da análise justamente
+   quando ela é o caso mais interessante. */
+function exportarObrasExcel() {
+  const dados = S.obrasNaTela || [];
+  if (!dados.length) { alert('Nenhuma obra no filtro atual.'); return; }
+
+  const FMT_HORA = '[h]:mm';
+  const FMT_BRL  = 'R$ #,##0';
+  const FMT_PCT  = '0.0%';
+  const emHoras  = (h) => (Number(h) || 0) / 24;
+
+  const col = (n) => {
+    let t = '';
+    for (n = n + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+      t = String.fromCharCode(65 + (n - 1) % 26) + t;
+    }
+    return t;
+  };
+  const formatar = (aba, indice, de, ate, z) => {
+    const letra = col(indice);
+    for (let i = de; i <= ate; i++) {
+      const c = aba[letra + i];
+      if (c && typeof c.v === 'number') { c.t = 'n'; c.z = z; }
+    }
+  };
+
+  // último lançamento de cada obra, mesmo fora do filtro de data
+  const ultimo = new Map();
+  for (const r of S.linhas) {
+    if (!r.obra) continue;
+    const a = ultimo.get(r.obra);
+    if (!a || r.data > a) ultimo.set(r.obra, r.data);
+  }
+
+  const cab = ['Obra', 'Status', 'Prioridade', 'Cidade', 'Estado', 'Tipo de obra',
+               'Horas', 'Produtivas', 'Indireto', '% produtivas',
+               'Lançamentos', 'Dias com movimento', 'Pessoas',
+               'Custo de mão de obra', 'Valor do contrato', '% consumido', 'Saldo',
+               'Data início', 'Prazo', 'Último lançamento', 'Dias úteis parada'];
+
+  const aoa = [cab];
+  ordenarPor(dados, 'horas', true).forEach(d => {
+    const o   = obraCadastrada(d.chave);
+    const val = o ? numBRL(o.valor_obra) : 0;
+    const ult = ultimo.get(d.chave) || '';
+    aoa.push([
+      d.chave,
+      o ? (o.status || 'EM ANDAMENTO') : '— não cadastrada —',
+      o ? (o.prioridade || '') : '',
+      o ? (o.sigla_cidade || '') : '',
+      o ? (o.cliente_estado || '') : '',
+      o ? (o.tipo_obra || '') : '',
+      emHoras(d.horas), emHoras(d.prod), emHoras(d.indir), d.taxaProd || 0,
+      d.n || 0, d.nDatas || 0, d.nColabs || 0,
+      d.custo || 0, val, val ? (d.custo || 0) / val : 0, val ? val - (d.custo || 0) : 0,
+      o && o.data_inicio ? fmtData(o.data_inicio) : '',
+      o && o.data_fim    ? fmtData(o.data_fim)    : '',
+      ult ? fmtData(ult) : '',
+      ult ? diasUteisDesde(ult) : '',
+    ]);
+  });
+
+  const aba = XLSX.utils.aoa_to_sheet(aoa);
+  const ultLinha = aoa.length;
+  [6, 7, 8].forEach(i => formatar(aba, i, 2, ultLinha, FMT_HORA));
+  [9, 15].forEach(i => formatar(aba, i, 2, ultLinha, FMT_PCT));
+  [13, 14, 16].forEach(i => formatar(aba, i, 2, ultLinha, FMT_BRL));
+  aba['!cols'] = cab.map((c, i) => ({ wch: i === 0 ? 38 : Math.max(11, c.length + 2) }));
+  aba['!autofilter'] = { ref: 'A1:' + col(cab.length - 1) + ultLinha };
+  aba['!freeze'] = { xSplit: 1, ySplit: 1 };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, aba, 'Obras');
+
+  // ── aba 2: cadastradas sem nenhuma hora ──
+  const comHoras = new Set(dados.map(d => normalizar(d.chave)));
+  const paradas = Object.values(S.obras)
+    .filter(o => o.ativo !== false && !comHoras.has(normalizar(o.nome)))
+    .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+
+  if (paradas.length) {
+    const cab2 = ['Obra', 'Status', 'Prioridade', 'Cidade', 'Estado',
+                  'Valor do contrato', 'Data início', 'Prazo', 'Responsáveis'];
+    const aoa2 = [cab2];
+    paradas.forEach(o => aoa2.push([
+      o.nome, o.status || 'EM ANDAMENTO', o.prioridade || '',
+      o.sigla_cidade || '', o.cliente_estado || '', numBRL(o.valor_obra),
+      o.data_inicio ? fmtData(o.data_inicio) : '',
+      o.data_fim    ? fmtData(o.data_fim)    : '',
+      o.responsaveis || '',
+    ]));
+    const aba2 = XLSX.utils.aoa_to_sheet(aoa2);
+    formatar(aba2, 5, 2, aoa2.length, FMT_BRL);
+    aba2['!cols'] = cab2.map((c, i) => ({ wch: i === 0 ? 38 : Math.max(12, c.length + 2) }));
+    aba2['!autofilter'] = { ref: 'A1:' + col(cab2.length - 1) + aoa2.length };
+    XLSX.utils.book_append_sheet(wb, aba2, 'Cadastradas sem horas');
+  }
+
+  XLSX.writeFile(wb, 'obras_' + isoDe(new Date()) + '.xlsx');
+}
+
+
 function exportarExcel() {
   const linhas = filtrar();
   if (!linhas.length) { alert('Nada para exportar no filtro atual.'); return; }
@@ -3027,8 +3299,27 @@ function ligarEventos() {
     render();
   });
 
-  ['#f-de','#f-ate','#f-colab','#f-setor','#f-obra','#f-disc','#f-tipo']
+  ['#f-de','#f-ate','#f-colab','#f-setor','#f-disc','#f-tipo']
     .forEach(s => $(s).addEventListener('change', render));
+
+  // Obra: escolher ADICIONA à lista em vez de trocar. O select volta para
+  // "todas as obras" logo em seguida, pronto para a próxima escolha.
+  $('#f-obra').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (v) S.obrasSel.add(v);
+    e.target.value = '';
+    desenharChipsObra();
+    render();
+  });
+
+  // tirar uma etiqueta, ou limpar todas
+  $('#chips-obra').addEventListener('click', (e) => {
+    const x = e.target.closest('[data-tirar-obra]');
+    if (x) { S.obrasSel.delete(x.dataset.tirarObra); desenharChipsObra(); render(); return; }
+    if (e.target.closest('#btn-limpar-obras')) {
+      S.obrasSel.clear(); desenharChipsObra(); render();
+    }
+  });
 
   // "igual ao sistema": muda os critérios de contagem e o formato das horas
   const chk = $('#chk-modo-sistema');
@@ -3055,6 +3346,8 @@ function ligarEventos() {
   $('#btn-limpar').addEventListener('click', () => {
     ['#f-de','#f-ate','#f-colab','#f-setor','#f-obra','#f-disc','#f-tipo','#f-busca','#f-periodo']
       .forEach(s => { $(s).value = ''; });
+    S.obrasSel.clear();
+    desenharChipsObra();
     render();
   });
 
@@ -3073,6 +3366,37 @@ function ligarEventos() {
 
   $('#conteudo').addEventListener('click', (e) => {
     if (e.target.closest('#btn-conferir'))     { rodarConferencia(); return; }
+    if (e.target.closest('#btn-excel-obras'))  { exportarObrasExcel(); return; }
+
+    // ── aumento com data ──
+    const abrir = e.target.closest('[data-abrir-aumento]');
+    if (abrir) {
+      S.editandoAumento = S.editandoAumento === abrir.dataset.abrirAumento
+        ? null : abrir.dataset.abrirAumento;
+      render();
+      return;
+    }
+    if (e.target.closest('#btn-aum-cancelar')) { S.editandoAumento = null; render(); return; }
+
+    const salvar = e.target.closest('#btn-aum-salvar');
+    if (salvar) {
+      const v  = $('#in-aum-valor').value;
+      const de = $('#in-aum-de').value;
+      if (!de)  { alert('Informe a partir de que dia o novo valor passa a valer.'); return; }
+      if (!CUSTOS.definirAumento(salvar.dataset.nome, v, de)) {
+        alert('Valor inválido. Ex: 110 ou 110,50'); return;
+      }
+      S.editandoAumento = null;
+      render();
+      return;
+    }
+
+    const tirar = e.target.closest('[data-tirar-aumento]');
+    if (tirar) {
+      CUSTOS.tirarAumento(tirar.dataset.tirarAumento, tirar.dataset.de);
+      render();
+      return;
+    }
     if (e.target.closest('#btn-cst-exportar')) { CUSTOS.exportar(); return; }
     if (e.target.closest('#btn-cst-importar')) { $('#arq-custos').click(); return; }
     if (e.target.closest('#btn-cst-limpar'))   { if (CUSTOS.limpar()) render(); return; }
