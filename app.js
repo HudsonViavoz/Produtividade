@@ -105,6 +105,7 @@ const S = {
   usuario: null, perfil: null, admin: false,
   linhas: [], atualizadoEm: null,
   aba: null, ordem: {}, pagina: {}, graficos: [],
+  tabelas: {},           // argumentos de cada tabela, para refazer só ela
   atalhoPeriodo: '', diaDoAtalho: '',   // para recalcular quando o dia virar
   timerAtualizar: null, ocultoDesde: 0,
   canalRealtime: null, aoVivo: false, ultimoEventoEm: null, debounceRealtime: null,
@@ -124,9 +125,85 @@ const S = {
 const $  = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
+/* ── TEMA ─────────────────────────────────────────────────────────
+   Claro e escuro são o MESMO desenho: só as cores mudam. Espaçamento,
+   raio, tipografia e altura são comuns aos dois.
+
+   O padrão continua escuro — quem já usa o painel não é surpreendido.
+   A escolha fica no navegador de cada pessoa, e o `index.html` a aplica
+   antes da primeira pintura para não piscar.
+   ─────────────────────────────────────────────────────────────── */
+const TEMA = {
+  CHAVE: 'viavoz_tema',
+
+  atual() { return document.documentElement.dataset.tema === 'claro' ? 'claro' : 'escuro'; },
+
+  aplicar(t, redesenhar) {
+    if (t === 'claro') document.documentElement.dataset.tema = 'claro';
+    else delete document.documentElement.dataset.tema;
+    try { localStorage.setItem(this.CHAVE, t); } catch (e) {}
+
+    const b = $('#btn-tema');
+    if (b) {
+      b.textContent = t === 'claro' ? '☾' : '☀';
+      b.title = t === 'claro' ? 'Mudar para o tema escuro' : 'Mudar para o tema claro';
+    }
+    aplicarTemaNosGraficos();
+    // os gráficos guardam a cor no momento em que foram criados, então
+    // precisam ser refeitos para pegar o tema novo
+    if (redesenhar && S.usuario) render();
+  },
+
+  alternar() { this.aplicar(this.atual() === 'claro' ? 'escuro' : 'claro', true); },
+
+  iniciar() {
+    let t = 'escuro';
+    try { t = localStorage.getItem(this.CHAVE) === 'claro' ? 'claro' : 'escuro'; } catch (e) {}
+    this.aplicar(t, false);
+  },
+};
+
+/* Esqueleto da tela: ocupa o espaço com a forma do que vem, em vez de
+   deixar o branco. Evita o salto de layout quando o conteúdo chega. */
+function esqueleto() {
+  const cartao = '<div class="esq esq-kpi"></div>';
+  const linha  = '<div class="esq esq-linha"></div>';
+  return '<div class="kpis">' + cartao.repeat(6) + '</div>' +
+         '<div class="box esq-bloco"><div class="esq esq-grafico"></div></div>' +
+         '<div class="box esq-bloco">' + linha.repeat(8) + '</div>';
+}
+
+/* Dois retornos visuais diferentes, porque são duas situações diferentes:
+
+   • antes de entrar, o véu é a única coisa na tela — ele fica;
+   • já dentro, cobrir tudo a cada "Atualizar" é pior que não cobrir.
+     Entra uma barra fina no topo e o conteúdo continua legível.
+
+   Na primeira carga, quando ainda não há nada para manter na tela, o
+   esqueleto ocupa o lugar. */
+/* Entrada suave do conteúdo — só na TROCA DE ABA.
+   Animar a cada render faria a tela piscar a cada clique de paginação ou
+   de ordenação, que é o oposto de fluidez. */
+function animarEntrada() {
+  const c = $('#conteudo');
+  if (!c) return;
+  c.classList.remove('entrando');
+  void c.offsetWidth;            // força o navegador a reiniciar a animação
+  c.classList.add('entrando');
+}
+
 function carregando(on, txt) {
-  $('#carregando').classList.toggle('oculto', !on);
+  const dentro = !$('#app').classList.contains('oculto');
+
+  $('#carregando').classList.toggle('oculto', !on || dentro);
+  const barra = $('#barra-progresso');
+  if (barra) barra.classList.toggle('ativa', !!on && dentro);
   if (txt) $('#carregando-txt').textContent = txt;
+
+  const alvo = $('#conteudo');
+  if (on && dentro && !S.linhas.length && alvo && !alvo.children.length) {
+    alvo.innerHTML = esqueleto();
+  }
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -951,6 +1028,13 @@ function secao(titulo, corpo, dica) {
 }
 
 function box(html)    { return '<div class="box">' + html + '</div>'; }
+
+/* Nota recolhível: o resumo fica sempre visível, o detalhe só para quem
+   abrir. Texto longo some da tela sem sumir do sistema. */
+function nota(resumo, corpo, tipo) {
+  return '<details class="nota' + (tipo ? ' ' + tipo : '') + '">' +
+    '<summary>' + resumo + '</summary><div>' + corpo + '</div></details>';
+}
 function grafico(id, alto) {
   return '<div class="gwrap' + (alto ? ' alto' : '') + '"><canvas id="' + id + '"></canvas></div>';
 }
@@ -996,7 +1080,33 @@ function controlePaginas(id, pag, total, de, ate, n) {
 /* Tabela ordenavel e paginada.
    `porPagina` deixou de cortar a lista: agora e o tamanho da pagina, e
    nenhuma linha fica inacessivel. Passe null para listar tudo de uma vez. */
+/* `tabela()` guarda os argumentos e embrulha o miolo numa caixa marcada.
+
+   Isso é o que permite trocar de página ou reordenar SEM refazer a tela
+   inteira: `redesenharTabela()` acha a caixa pelo id e troca só o miolo.
+   Antes, clicar em "página 2" reconstruía a aba inteira e destruía e
+   recriava os 4 gráficos para mudar 20 linhas de uma tabela.
+
+   A caixa usa `display: contents`, então não existe para o layout — as
+   margens negativas dos cartões continuam funcionando igual. */
 function tabela(id, colunas, dados, porPagina, ordemPadrao, clicavel) {
+  S.tabelas[id] = { colunas, dados, porPagina, ordemPadrao, clicavel };
+  return '<div class="tab-caixa" data-tabela="' + esc(id) + '">' +
+         mioloTabela(id, colunas, dados, porPagina, ordemPadrao, clicavel) +
+         '</div>';
+}
+
+/* Refaz só o miolo de uma tabela, no lugar. Se a caixa não estiver mais
+   na tela, cai para o render completo — nunca deixa a tela inconsistente. */
+function redesenharTabela(id) {
+  const chave = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+  const caixa = document.querySelector('[data-tabela="' + chave + '"]');
+  const a = S.tabelas[id];
+  if (!caixa || !a) { render(); return; }
+  caixa.innerHTML = mioloTabela(id, a.colunas, a.dados, a.porPagina, a.ordemPadrao, a.clicavel);
+}
+
+function mioloTabela(id, colunas, dados, porPagina, ordemPadrao, clicavel) {
   const ord = S.ordem[id] || ordemPadrao ||
     { campo: colunas[1] ? colunas[1].campo : colunas[0].campo, desc: true };
   const ordenadas = ordenarPor(dados, ord.campo, ord.desc);
@@ -1057,6 +1167,11 @@ function limparGraficos() {
 
 // Apresentacao dos graficos — espelha os tokens de styles.css.
 // Nada aqui altera dado ou calculo: so cor, fonte e espacamento.
+/* Lê um token do CSS. É assim que o gráfico segue o tema: as cores não
+   ficam escritas aqui, elas vêm da mesma fonte que o resto da interface. */
+const tokenCSS = (nome, reserva) =>
+  getComputedStyle(document.documentElement).getPropertyValue(nome).trim() || reserva;
+
 const FONTE_G = { size: 11, family: "'Inter', -apple-system, sans-serif" };
 const EIXO  = { color: '#78849a', font: FONTE_G, padding: 6 };
 const GRADE = { color: 'rgba(255,255,255,.05)', drawTicks: false, tickLength: 8 };
@@ -1093,6 +1208,27 @@ if (typeof Chart !== 'undefined') {
   Chart.defaults.datasets.bar.borderSkipped   = false;
   Object.assign(Chart.defaults.plugins.tooltip, DICA);
   Object.assign(Chart.defaults.plugins.legend.labels, LEGENDA);
+}
+
+/* Reescreve as cores dos gráficos a partir do CSS do tema em uso.
+   Muta os objetos em vez de recriá-los porque `desenhar()` os lê por
+   referência no momento do desenho. */
+function aplicarTemaNosGraficos() {
+  EIXO.color    = tokenCSS('--text-muted', '#78849a');
+  GRADE.color   = tokenCSS('--grade-grafico', 'rgba(255,255,255,.05)');
+  LEGENDA.color = tokenCSS('--text-secondary', '#a3aec1');
+
+  DICA.backgroundColor = tokenCSS('--surface-elevated', '#131823');
+  DICA.borderColor     = tokenCSS('--border-strong', 'rgba(255,255,255,.15)');
+  DICA.titleColor      = tokenCSS('--text-primary', '#e9edf5');
+  DICA.bodyColor       = tokenCSS('--text-secondary', '#a3aec1');
+
+  if (typeof Chart !== 'undefined') {
+    Chart.defaults.color       = LEGENDA.color;
+    Chart.defaults.borderColor = GRADE.color;
+    Object.assign(Chart.defaults.plugins.tooltip, DICA);
+    Object.assign(Chart.defaults.plugins.legend.labels, LEGENDA);
+  }
 }
 
 function desenhar(id, cfg) {
@@ -1140,7 +1276,8 @@ function graficoRosca(id, itens) {
       labels: itens.map(i => i.chave),
       datasets: [{ data: itens.map(i => i.horas),
         backgroundColor: itens.map((_, i) => PALETA[i % PALETA.length]),
-        borderColor: '#131823', borderWidth: 2, hoverOffset: 6, hoverBorderColor: '#131823' }],
+        borderColor: tokenCSS('--surface', '#131823'), borderWidth: 2, hoverOffset: 6,
+        hoverBorderColor: tokenCSS('--surface', '#131823') }],
     },
     options: {
       cutout: '62%',
@@ -1811,24 +1948,17 @@ function telaCustoHora(linhas) {
   const horasDe = {};
   for (const r of base) horasDe[r.colaborador] = (horasDe[r.colaborador] || 0) + r.horas;
 
-  let html = '<div class="box" style="border-color:rgba(210,150,63,.38);margin-bottom:16px">' +
-    '<div style="color:var(--warning-text);font-weight:600;margin-bottom:5px">⚠ Informação confidencial</div>' +
-    '<div class="muted" style="font-size:12.5px">' +
-    'Estes valores ficam salvos <b>somente neste navegador</b> — não vão para o site nem para o banco, ' +
-    'e ninguém que abrir o painel em outro computador os enxerga.<br>' +
+  let html = nota('🔒 Salário fica só neste navegador',
+    'Estes valores <b>não vão para o site nem para o banco</b>, e ninguém que abrir o painel ' +
+    'em outro computador os enxerga.<br>' +
     'Para passar para outro gestor use <b>Exportar</b> e envie o arquivo por um canal interno. ' +
-    'Nunca coloque esse arquivo na pasta do site.' +
-    '</div></div>';
+    'Nunca coloque esse arquivo na pasta do site.', 'aviso');
 
   if (filtrando) {
-    html += '<div class="box" style="border-color:rgba(77,143,214,.34);margin-bottom:16px">' +
-      '<div style="font-weight:600;color:var(--primary-hover);margin-bottom:4px">' +
-      'Lista recortada pelo filtro</div>' +
-      '<div class="muted" style="font-size:12.5px">Mostrando só quem lançou hora em <b>' +
-      esc(recorte.join('</b> · <b>')) + '</b>. As horas e o custo da tabela são os ' +
-      'desse recorte, não os totais da pessoa.<br>' +
-      'O valor/hora que você digitar vale para a pessoa inteira — ele não é por ' +
-      'disciplina. Limpe os filtros para ver o quadro completo.</div></div>';
+    html += nota('Recortado por <b>' + esc(recorte.join('</b> · <b>')) + '</b>',
+      'As horas e o custo da tabela são os desse recorte, não os totais da pessoa.<br>' +
+      'O valor/hora que você digitar vale para a pessoa inteira — ele <b>não</b> é por ' +
+      'disciplina. Limpe os filtros para ver o quadro completo.');
   }
 
   // o preenchimento em massa tem que agir sobre ESTA lista, não sobre o
@@ -2056,13 +2186,13 @@ function telaFechamento(linhas) {
 
     desenhar('g-fech-h', { type: 'doughnut',
       data: { labels: rotulos, datasets: [{ data: CATS.map(c => c.horas),
-        backgroundColor: cores, borderColor: '#131823', borderWidth: 2, hoverOffset: 6 }] },
+        backgroundColor: cores, borderColor: tokenCSS('--surface', '#131823'), borderWidth: 2, hoverOffset: 6 }] },
       options: { cutout: '58%', plugins: { legend: { position: 'right',
         labels: LEGENDA }, tooltip: DICA } } });
 
     desenhar('g-fech-c', { type: 'doughnut',
       data: { labels: rotulos, datasets: [{ data: CATS.map(c => c.custo),
-        backgroundColor: cores, borderColor: '#131823', borderWidth: 2, hoverOffset: 6 }] },
+        backgroundColor: cores, borderColor: tokenCSS('--surface', '#131823'), borderWidth: 2, hoverOffset: 6 }] },
       options: { cutout: '58%', plugins: { legend: { position: 'right',
         labels: LEGENDA }, tooltip: DICA } } });
 
@@ -2188,19 +2318,16 @@ function telaResultado(linhas) {
   const custoNelas = comValor.reduce((s, o) => s + o.custo, 0);
   const estourou  = comValor.filter(o => o.saldo < 0);
 
-  html += '<div class="box" style="border-color:var(--line-2);margin-bottom:22px">' +
-    '<div style="font-weight:600;color:var(--text-primary);margin-bottom:5px">' +
-    'O que dá e o que não dá para calcular aqui</div>' +
-    '<div class="muted" style="font-size:12.5px">' +
-    '<b>' + fmtN(comValor.length) + ' de ' + fmtN(obras.length) + '</b> obras com hora lançada ' +
-    'têm valor de contrato preenchido no cadastro. Só nessas dá para estimar margem. ' +
+  html += nota(
+    '<b>' + fmtN(comValor.length) + ' de ' + fmtN(obras.length) + '</b> obras têm valor de contrato — ' +
+    'só nessas dá para estimar margem',
     (semValor.length
       ? 'As outras <b>' + fmtN(semValor.length) + '</b> aparecem na segunda tabela, com o custo ' +
-        'que já consumiram — falta só alguém preencher o valor no cadastro de obras.'
+        'que já consumiram — falta só alguém preencher o valor no cadastro de obras.<br>'
       : '') +
-    '<br>A conta é <b>valor do contrato − custo de mão de obra</b>. Não entram material, ' +
-    'imposto, equipamento nem rateio de estrutura, então o saldo é um teto, não o lucro final.' +
-    '</div></div>';
+    'A conta é <b>valor do contrato − custo de mão de obra</b>. Não entram material, ' +
+    'imposto, equipamento nem rateio de estrutura, então o saldo é um teto, não o lucro final.',
+    comValor.length ? '' : 'aviso');
 
   if (comValor.length) {
     html += '<div class="kpis">' +
@@ -2480,15 +2607,13 @@ function telaCobertura(linhas) {
         'lançou antes de trabalhar', pontual.futuros.length ? 'bad' : 'ok') : '') +
     '</div>';
 
-  html += '<div class="box" style="margin-bottom:18px;border-color:var(--line-2)">' +
-    '<span class="muted" style="font-size:12.5px">' +
-    'Período conferido: <b>' + fmtData(de) + '</b> a <b>' + fmtData(ate) + '</b> · ' +
-    '<b>' + uteis.length + '</b> dias úteis (segunda a sexta). ' +
-    'Feriados não são descontados, então aparecem como dia sem lançamento. ' +
+  html += nota(
+    fmtData(de) + ' a ' + fmtData(ate) + ' · <b>' + uteis.length + '</b> dias úteis',
+    'Dias úteis são de segunda a sexta. Feriados não são descontados, então ' +
+    'aparecem como dia sem lançamento.<br>' +
     'Quem está marcado como <b>INATIVO</b> no cadastro não é cobrado — a lista dessas ' +
     'pessoas fica mais abaixo.' +
-    (S.filtros.colab ? ' O filtro de colaborador não vale nesta tela — ela existe para mostrar quem está faltando.' : '') +
-    '</span></div>';
+    (S.filtros.colab ? '<br>O filtro de colaborador não vale nesta tela: ela existe justamente para mostrar quem está faltando.' : ''));
 
   if (nunca.length) {
     html += secao('Nunca lançaram nada',
@@ -2953,6 +3078,7 @@ function blocoConferencia() {
 function render() {
   lerFiltros();
   limparGraficos();
+  S.tabelas = {};   // o registro vale só para a tela que está no ar
   const linhas = filtrar();
 
   $('#contador').textContent = fmtN(linhas.length) + ' de ' + fmtN(S.linhas.length) + ' registros';
@@ -3328,6 +3454,7 @@ function ligarAtualizacaoAutomatica() {
    13. EVENTOS E INÍCIO
    ─────────────────────────────────────────────────────────────── */
 function ligarEventos() {
+  $('#btn-tema').addEventListener('click', () => TEMA.alternar());
   $('#form-login').addEventListener('submit', entrar);
   $('#btn-sair').addEventListener('click', sair);
   $('#btn-atualizar').addEventListener('click', () => carregarDados());
@@ -3339,6 +3466,7 @@ function ligarEventos() {
     S.aba = b.dataset.aba;
     $$('#nav-abas button').forEach(x => x.classList.toggle('ativa', x === b));
     render();
+    animarEntrada();
   });
 
   ['#f-de','#f-ate','#f-colab','#f-setor','#f-disc','#f-tipo']
@@ -3499,8 +3627,8 @@ function ligarEventos() {
     const id = th.dataset.tab, campo = th.dataset.campo;
     const atual = S.ordem[id];
     S.ordem[id] = (atual && atual.campo === campo) ? { campo, desc: !atual.desc } : { campo, desc: true };
-    S.pagina[id] = 1;          // reordenou: a leitura recomeca do topo
-    render();
+    S.pagina[id] = 1;          // reordenou: a leitura recomeça do topo
+    redesenharTabela(id);
   });
 
   // troca de página das tabelas
@@ -3509,14 +3637,15 @@ function ligarEventos() {
   $('#conteudo').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab-pag]');
     if (!b || b.disabled) return;
-    const y = window.scrollY;
     S.pagina[b.dataset.tabPag] = Number(b.dataset.pag) || 1;
-    render();
-    window.scrollTo({ top: y, behavior: 'instant' });
+    // só esta tabela muda: nada de refazer a aba nem recriar os gráficos,
+    // e a rolagem fica onde estava sem precisar ser salva e devolvida
+    redesenharTabela(b.dataset.tabPag);
   });
 }
 
 (async function iniciar() {
+  TEMA.iniciar();
   CUSTOS.carregar();
   ligarEventos();
   // começa no mês corrente para não puxar anos de histórico de cara
