@@ -4,13 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Painel de Produtividade — Viavoz</title>
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
+<script>
+  /* Aplica o tema ANTES da primeira pintura. Sem isto, quem escolheu o
+     claro veria um piscar escuro a cada carregamento, porque o app.js só
+     roda no fim do body. */
+  try {
+    var t = localStorage.getItem('viavoz_tema');
+    if (t === 'claro' || t === 'escuro') document.documentElement.dataset.tema = t;
+  } catch (e) {}
+</script>
 <meta name="description" content="Painel de produtividade e custos — Viavoz">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="styles.css?v=202610081600">
+<link rel="stylesheet" href="styles.css?v=202610141700">
 </head>
 <body>
 
@@ -49,6 +58,7 @@
 
   <!-- cabeçalho + abas viajam juntos na rolagem -->
   <div class="topo-fixo">
+    <div id="barra-progresso" aria-hidden="true"></div>
 
     <header class="topo">
       <div class="topo-marca">
@@ -63,6 +73,7 @@
 
       <div class="topo-dir">
         <span class="selo" id="selo-tempo-real" title="Estado da conexão ao vivo">⏱ periódico</span>
+        <button id="btn-tema" class="ghost icone" title="Alternar tema" aria-label="Alternar entre tema claro e escuro">☀</button>
         <button id="btn-atualizar" class="secundario" title="Reler os lançamentos agora">
           <span class="ico-girar" aria-hidden="true">⟳</span>
           <span class="rotulo-botao">Atualizar</span>
@@ -195,6 +206,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="app.js?v=202610081600"></script>
+<script src="app.js?v=202610141700"></script>
 </body>
 </html>
