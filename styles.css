@@ -132,6 +132,17 @@
   --w-modal: 1180px;
   --w-login: 404px;
 
+  /* ── camadas e véus (mudam com o tema) ───────────────────────── */
+  --topo-bg:         rgba(14, 18, 26, 0.88);
+  --login-bg:        rgba(19, 24, 35, 0.92);
+  --modal-topo-bg:   rgba(19, 24, 35, 0.94);
+  --veu-modal:       rgba(4, 6, 10, 0.82);
+  --veu-carregando:  rgba(10, 13, 19, 0.92);
+  --zebra:           rgba(255, 255, 255, 0.018);
+  --grade-grafico:   rgba(255, 255, 255, 0.05);
+  --esqueleto:       rgba(255, 255, 255, 0.05);
+  --esqueleto-brilho: rgba(255, 255, 255, 0.11);
+
   /* ── movimento ───────────────────────────────────────────────── */
   --ease:     cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -185,6 +196,104 @@
 
   --sh-1: var(--shadow-sm); --sh-2: var(--shadow-md); --sh-3: var(--shadow-lg);
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   TEMA CLARO
+   Só as cores mudam. Espaçamento, raio, tipografia e altura continuam
+   valendo para os dois temas — é o mesmo produto, não dois desenhos.
+
+   Os aliases legados (--surface-1, --line-2, --accent…) não precisam ser
+   repetidos aqui: eles são `var(--token)` e resolvem no elemento, então
+   acompanham sozinhos. Mesma coisa para as tinturas em color-mix.
+
+   O padrão continua escuro. O tema só muda quando a pessoa escolhe, e a
+   escolha fica no navegador dela.
+   ═══════════════════════════════════════════════════════════════════ */
+:root[data-tema="claro"] {
+  --bg:                #f5f7fa;
+  --bg-secondary:      #ffffff;
+  --bg-glow:           #e9eef6;
+  --surface:           #ffffff;
+  --surface-hover:     #f2f5f9;
+  --surface-elevated:  #ffffff;
+  --surface-sunken:    #eef1f6;
+
+  --border:            rgba(16, 24, 40, 0.11);
+  --border-subtle:     rgba(16, 24, 40, 0.06);
+  --border-strong:     rgba(16, 24, 40, 0.17);
+
+  --text-primary:      #121a26;
+  --text-secondary:    #46536a;
+  --text-muted:        #66748a;
+  --text-faint:        #8a96a8;
+
+  /* azul um pouco mais fundo: sobre branco o tom claro perde contraste */
+  --primary:           #2f6fc4;
+  --primary-hover:     #255da8;
+  --primary-deep:      #1d4a87;
+  --primary-soft:      rgba(47, 111, 196, 0.10);
+  --primary-ring:      rgba(47, 111, 196, 0.22);
+
+  --success:           #2f8a5b;
+  --success-soft:      rgba(47, 138, 91, 0.11);
+  --success-text:      #24714a;
+  --warning:           #a9711c;
+  --warning-soft:      rgba(169, 113, 28, 0.12);
+  --warning-text:      #8a5c16;
+  --danger:            #c0444b;
+  --danger-soft:       rgba(192, 68, 75, 0.10);
+  --danger-text:       #a3373e;
+  --info:              #2f6fc4;
+
+  /* categorias: mesmos matizes, escurecidos para ler sobre branco */
+  --cat-prod:          #2f6fc4;
+  --cat-indir:         #b5722a;
+  --cat-absen:         #b24a50;
+  --cat-fora:          #7a8698;
+
+  --topo-bg:           rgba(255, 255, 255, 0.86);
+  --login-bg:          rgba(255, 255, 255, 0.94);
+  --modal-topo-bg:     rgba(255, 255, 255, 0.95);
+  --veu-modal:         rgba(16, 24, 40, 0.38);
+  --veu-carregando:    rgba(245, 247, 250, 0.92);
+  --zebra:             rgba(16, 24, 40, 0.022);
+  --grade-grafico:     rgba(16, 24, 40, 0.08);
+  --esqueleto:         rgba(16, 24, 40, 0.06);
+  --esqueleto-brilho:  rgba(16, 24, 40, 0.11);
+
+  /* no claro, sombra é o que dá profundidade — no escuro é a luz */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 6px 20px -6px rgba(16, 24, 40, 0.14);
+  --shadow-lg: 0 24px 60px -16px rgba(16, 24, 40, 0.24);
+
+  --surface-4: #e4e9f0;
+  --line-3:    rgba(16, 24, 40, 0.24);
+
+  color-scheme: light;
+}
+
+/* a etiqueta de tipo "fora" fica ilegível em branco sobre branco */
+:root[data-tema="claro"] .tag.prod  { color: #205394; }
+:root[data-tema="claro"] .tag.indir { color: #8a5618; }
+:root[data-tema="claro"] .tag.absen { color: #a13b41; }
+
+/* o halo de fundo some no claro: sobre branco vira uma mancha suja */
+:root[data-tema="claro"] body::before { opacity: 0; }
+
+/* ícone do date picker: no claro o invert deixaria o ícone branco */
+:root[data-tema="claro"] input[type=date]::-webkit-calendar-picker-indicator {
+  filter: none;
+  opacity: 0.55;
+}
+
+/* o "fio de luz" do cartão de login não faz sentido sobre branco */
+:root[data-tema="claro"] .login-card::before { opacity: 0.35; }
+
+/* barra de rolagem */
+:root[data-tema="claro"] { scrollbar-color: #c6cedb transparent; }
+:root[data-tema="claro"] ::-webkit-scrollbar-thumb { background: #c6cedb; }
+:root[data-tema="claro"] ::-webkit-scrollbar-thumb:hover { background: #aab5c6; }
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -297,7 +406,7 @@ label.campo {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(14, 18, 26, 0.88);
+  background: var(--topo-bg);
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
   border-bottom: 1px solid var(--border);
@@ -337,8 +446,8 @@ label.campo {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(620px 420px at 22% 18%, rgba(77, 143, 214, 0.10), transparent 62%),
-    radial-gradient(520px 380px at 80% 86%, rgba(46, 103, 159, 0.09), transparent 60%);
+    radial-gradient(620px 420px at 22% 18%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 62%),
+    radial-gradient(520px 380px at 80% 86%, color-mix(in srgb, var(--primary-deep) 9%, transparent), transparent 60%);
 }
 
 .login-card {
@@ -346,7 +455,7 @@ label.campo {
   width: 100%;
   max-width: var(--w-login);
   padding: var(--space-7) var(--space-6) var(--space-6);
-  background: rgba(19, 24, 35, 0.92);
+  background: var(--login-bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
@@ -426,7 +535,7 @@ label.campo {
   line-height: var(--lh-snug);
   color: var(--danger-text);
   background: var(--danger-soft);
-  border: 1px solid rgba(210, 102, 107, 0.35);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   border-radius: var(--radius-sm);
   animation: sobe 0.2s var(--ease-out) both;
 }
@@ -511,7 +620,7 @@ header.topo h1::before {
 }
 .selo.admin {
   color: var(--warning-text);
-  border-color: rgba(210, 150, 63, 0.35);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
   background: var(--warning-soft);
 }
 
@@ -522,7 +631,7 @@ header.topo h1::before {
 }
 #selo-tempo-real.aovivo {
   color: var(--success-text);
-  border-color: rgba(87, 172, 127, 0.38);
+  border-color: color-mix(in srgb, var(--success) 38%, transparent);
   background: var(--success-soft);
 }
 #selo-tempo-real.aovivo::before {
@@ -585,13 +694,13 @@ nav.abas button:hover:not(.ativa) {
 }
 nav.abas button.ativa {
   background: var(--primary-soft);
-  border-color: rgba(77, 143, 214, 0.34);
+  border-color: color-mix(in srgb, var(--primary) 34%, transparent);
   color: var(--primary-hover);
   font-weight: 600;
 }
 nav.abas button.ativa:hover {
-  background: rgba(77, 143, 214, 0.18);
-  border-color: rgba(77, 143, 214, 0.45);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
   color: var(--primary-hover);
 }
 
@@ -618,7 +727,9 @@ nav.abas button.ativa:hover {
   min-height: var(--h-control-sm);
   padding: 6px 10px;
   font-size: var(--fs-sm);
-  background: var(--surface-elevated);
+  /* background-color, não o atalho: `background:` zera o background-image,
+     que é justamente a seta desenhada do select */
+  background-color: var(--surface-elevated);
 }
 .filtros select { padding-right: 30px; }
 .filtros .sep { color: var(--text-faint); font-size: var(--fs-xs); }
@@ -665,7 +776,7 @@ nav.abas button.ativa:hover {
   min-height: var(--h-control);
   padding: 7px 11px;
   font-size: var(--fs-sm);
-  background: var(--surface-elevated);
+  background-color: var(--surface-elevated);
 }
 .campo-filtro select { padding-right: 32px; }
 
@@ -707,7 +818,7 @@ nav.abas button.ativa:hover {
 }
 .opcao:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .opcao:has(input:checked) {
-  border-color: rgba(210, 150, 63, 0.40);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
   background: var(--warning-soft);
   color: var(--warning-text);
 }
@@ -737,7 +848,7 @@ nav.abas button.ativa:hover {
   gap: var(--space-1);
   padding: 4px 4px 4px 11px;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(77, 143, 214, 0.34);
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, transparent);
   background: var(--primary-soft);
   color: var(--primary-hover);
   font-size: var(--fs-xs);
@@ -800,8 +911,8 @@ nav.abas button.ativa:hover {
   padding: 2px 3px 2px 9px;
   font-size: var(--fs-micro);
   font-family: var(--font-mono);
-  border-color: rgba(214, 139, 60, 0.32);
-  background: rgba(214, 139, 60, 0.11);
+  border-color: color-mix(in srgb, var(--cat-indir) 32%, transparent);
+  background: color-mix(in srgb, var(--cat-indir) 11%, transparent);
   color: #e0a668;
 }
 .chip-de {
@@ -948,7 +1059,7 @@ input[type=checkbox]:hover:not(:disabled) { border-color: var(--text-muted); }
   background: var(--surface-elevated) !important;
 }
 .cst-in:not(:placeholder-shown) {
-  border-color: rgba(87, 172, 127, 0.42) !important;
+  border-color: color-mix(in srgb, var(--success) 42%, transparent) !important;
   color: var(--success-text) !important;
 }
 
@@ -1034,11 +1145,11 @@ button.secundario:hover:not(:disabled) {
 button.exportar {
   color: var(--success-text);
   background: var(--success-soft);
-  border-color: rgba(87, 172, 127, 0.30);
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
 }
 button.exportar:hover:not(:disabled) {
-  background: rgba(87, 172, 127, 0.18);
-  border-color: rgba(87, 172, 127, 0.45);
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
   color: var(--success-text);
 }
 
@@ -1046,11 +1157,11 @@ button.exportar:hover:not(:disabled) {
 button.perigo {
   color: var(--danger-text);
   background: var(--danger-soft);
-  border-color: rgba(210, 102, 107, 0.30);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 button.perigo:hover:not(:disabled) {
-  background: rgba(210, 102, 107, 0.18);
-  border-color: rgba(210, 102, 107, 0.45);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   color: var(--danger-text);
 }
 
@@ -1080,11 +1191,11 @@ button.icone {
 #btn-cst-limpar {
   color: var(--danger-text);
   background: transparent;
-  border-color: rgba(210, 102, 107, 0.28);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
 }
 #btn-cst-limpar:hover:not(:disabled) {
   background: var(--danger-soft);
-  border-color: rgba(210, 102, 107, 0.48);
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
   color: var(--danger-text);
 }
 
@@ -1122,9 +1233,14 @@ button:hover:not(:disabled) .ico-girar { transform: rotate(180deg); }
   padding: var(--space-4);
   box-shadow: var(--shadow-sm);
 }
+/* A caixa da tabela existe só para o JavaScript achar o que refazer.
+   `display: contents` faz ela desaparecer do layout, então os seletores
+   abaixo continuam valendo como se ela não estivesse ali. */
+.tab-caixa { display: contents; }
+
 /* cartão que contém só tabela não precisa de respiro interno duplicado */
-.box > .tabela-rolagem { margin: calc(var(--space-4) * -1); }
-.box > .tabela-rolagem:only-child {
+.box > .tab-caixa > .tabela-rolagem { margin: calc(var(--space-4) * -1); }
+.box > .tab-caixa > .tabela-rolagem:only-child {
   border-radius: var(--radius-lg);
   overflow: auto hidden;
 }
@@ -1293,7 +1409,7 @@ td.livre {
 
 /* zebra quase imperceptível + destaque na linha sob o cursor */
 tbody tr { transition: background var(--t-fast); }
-tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.018); }
+tbody tr:nth-child(even) { background: var(--zebra); }
 tbody tr:hover { background: var(--primary-soft); }
 tbody tr:hover td { color: var(--text-primary); }
 
@@ -1330,11 +1446,11 @@ tbody tr:hover td { color: var(--text-primary); }
 }
 .pag-btn.atual {
   background: var(--primary-soft);
-  border-color: rgba(77, 143, 214, 0.34);
+  border-color: color-mix(in srgb, var(--primary) 34%, transparent);
   color: var(--primary-hover);
   font-weight: 600;
 }
-.pag-btn.atual:hover { background: rgba(77, 143, 214, 0.18); }
+.pag-btn.atual:hover { background: color-mix(in srgb, var(--primary) 18%, transparent); }
 .pag-btn.seta { font-size: var(--fs-md); line-height: 1; }
 .pag-btn:disabled { opacity: 0.25; }
 .pag-gap { color: var(--text-faint); padding: 0 2px; font-size: var(--fs-xs); }
@@ -1346,7 +1462,7 @@ tbody tr:hover td { color: var(--text-primary); }
   white-space: nowrap;
 }
 /* dentro de um cartão que só tem tabela, a barra acompanha o recuo negativo */
-.box > .tabela-rolagem + .paginacao { margin: 0 calc(var(--space-4) * -1) calc(var(--space-4) * -1); }
+.box > .tab-caixa > .tabela-rolagem + .paginacao { margin: 0 calc(var(--space-4) * -1) calc(var(--space-4) * -1); }
 
 @media (max-width: 560px) {
   .paginacao { padding: var(--space-2); justify-content: center; }
@@ -1404,9 +1520,9 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
   background: currentColor;
   opacity: 0.85;
 }
-.tag.prod  { color: #7fb4e8; border-color: rgba(74, 144, 217, 0.32); background: rgba(74, 144, 217, 0.11); }
-.tag.indir { color: #e0a668; border-color: rgba(214, 139, 60, 0.32); background: rgba(214, 139, 60, 0.11); }
-.tag.absen { color: #e08a8e; border-color: rgba(201, 89, 94, 0.32);  background: rgba(201, 89, 94, 0.11); }
+.tag.prod  { color: #7fb4e8; border-color: color-mix(in srgb, var(--cat-prod) 32%, transparent); background: color-mix(in srgb, var(--cat-prod) 11%, transparent); }
+.tag.indir { color: #e0a668; border-color: color-mix(in srgb, var(--cat-indir) 32%, transparent); background: color-mix(in srgb, var(--cat-indir) 11%, transparent); }
+.tag.absen { color: #e08a8e; border-color: color-mix(in srgb, var(--cat-absen) 32%, transparent);  background: color-mix(in srgb, var(--cat-absen) 11%, transparent); }
 .tag.fora  { color: var(--text-muted); border-color: var(--border);  background: var(--surface-elevated); }
 
 
@@ -1423,7 +1539,7 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
   padding: var(--space-5);
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: rgba(4, 6, 10, 0.82);
+  background: var(--veu-modal);
   animation: aparece 0.18s var(--ease) both;
 }
 @keyframes aparece { from { opacity: 0; } to { opacity: 1; } }
@@ -1447,7 +1563,7 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
-  background: rgba(19, 24, 35, 0.94);
+  background: var(--modal-topo-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
@@ -1478,7 +1594,7 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
 }
 #detalhe-fechar:hover {
   background: var(--danger-soft);
-  border-color: rgba(210, 102, 107, 0.35);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
   color: var(--danger-text);
 }
 
@@ -1491,6 +1607,122 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
    ═══════════════════════════════════════════════════════════════════ */
 .oculto { display: none !important; }
 
+/* ── entrada do conteúdo ao trocar de aba ─────────────────────────
+   Deslocamento pequeno e rápido. Mais que isso vira espera. */
+#conteudo.entrando > * {
+  animation: entra 0.24s var(--ease-out) both;
+}
+#conteudo.entrando > *:nth-child(2) { animation-delay: 0.03s; }
+#conteudo.entrando > *:nth-child(3) { animation-delay: 0.06s; }
+#conteudo.entrando > *:nth-child(n+4) { animation-delay: 0.08s; }
+@keyframes entra {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── nota recolhível ─────────────────────────────────────────────
+   Explicação longa não precisa ocupar a tela o tempo todo, mas também
+   não pode sumir: fica a uma linha de distância, aberta por quem quiser. */
+.nota {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--text-muted);
+}
+.nota > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-secondary);
+  font-weight: 500;
+  transition: color var(--t-fast), background var(--t-fast);
+  border-radius: var(--radius-md);
+}
+.nota > summary::-webkit-details-marker { display: none; }
+.nota > summary::before {
+  content: '›';
+  flex: none;
+  font-size: var(--fs-md);
+  line-height: 1;
+  color: var(--text-faint);
+  transition: transform var(--t);
+}
+.nota[open] > summary::before { transform: rotate(90deg); }
+.nota > summary:hover { background: var(--surface-hover); color: var(--text-primary); }
+.nota > div {
+  padding: 0 var(--space-4) var(--space-4) calc(var(--space-4) + 14px);
+  animation: entra 0.2s var(--ease-out) both;
+}
+.nota.aviso { border-left-color: var(--warning); }
+.nota.aviso > summary { color: var(--warning-text); }
+
+/* ── barra de progresso ──────────────────────────────────────────
+   Substitui o véu de tela cheia quando já há conteúdo: a pessoa
+   continua lendo enquanto os dados chegam. */
+#barra-progresso {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity var(--t);
+  pointer-events: none;
+  z-index: 2;
+}
+#barra-progresso.ativa { opacity: 1; }
+#barra-progresso::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  animation: corre 1.1s ease-in-out infinite;
+}
+@keyframes corre {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* ── esqueleto de carregamento ───────────────────────────────────
+   Ocupa o espaço com a forma do que vem, em vez de deixar o vazio e
+   depois empurrar tudo quando o conteúdo chega. */
+.esq {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--esqueleto);
+}
+.esq::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--esqueleto-brilho), transparent);
+  animation: brilha 1.4s ease-in-out infinite;
+}
+@keyframes brilha { 100% { transform: translateX(100%); } }
+
+.esq-kpi     { height: 104px; border-radius: var(--radius-lg); }
+.esq-grafico { height: 260px; border-radius: var(--radius-md); }
+.esq-bloco   { margin-bottom: var(--space-4); }
+.esq-linha   { height: 34px; margin-bottom: var(--space-2); }
+.esq-linha:last-child { margin-bottom: 0; }
+/* larguras levemente diferentes: bloco uniforme não parece conteúdo */
+.esq-linha:nth-child(3n)   { width: 92%; }
+.esq-linha:nth-child(4n+2) { width: 97%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .esq::after, #barra-progresso::after { animation: none; }
+  #barra-progresso::after { width: 100%; opacity: .5; }
+}
+
 /* tela de carregamento */
 #carregando {
   position: fixed;
@@ -1501,7 +1733,7 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
   justify-content: center;
   flex-direction: column;
   gap: var(--space-4);
-  background: rgba(10, 13, 19, 0.92);
+  background: var(--veu-carregando);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   font-size: var(--fs-sm);
