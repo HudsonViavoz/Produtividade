@@ -801,7 +801,37 @@ function unificarNomes() {
    Com 296 obras, um <select multiple> seria impraticável — a pessoa teria
    que segurar Ctrl e rolar. Aqui o select continua simples: escolher
    adiciona à lista, e cada escolha vira uma etiqueta que dá para remover. */
+/* Quantos recortes por dimensão estão ativos, e se a segunda faixa
+   precisa estar aberta. Sem este número, esconder os filtros faria a
+   pessoa perder de vista que a tela está recortada. */
+function atualizarContaFiltros() {
+  const n = ['#f-colab', '#f-setor', '#f-disc', '#f-tipo']
+    .reduce((t, sel) => t + (($(sel) && $(sel).value) ? 1 : 0), 0)
+    + S.obrasSel.size
+    + (($('#chk-modo-sistema') || {}).checked ? 1 : 0);
+
+  const marca = $('#sel-filtros');
+  if (marca) {
+    marca.textContent = n;
+    marca.classList.toggle('oculto', !n);
+  }
+  // com filtro ativo a faixa abre sozinha: esconder o que está filtrando
+  // é como mentir sobre o que está na tela
+  if (n && $('#filtros-extra') && $('#filtros-extra').classList.contains('oculto')) {
+    mostrarFiltrosExtra(true);
+  }
+  return n;
+}
+
+function mostrarFiltrosExtra(abrir) {
+  const caixa = $('#filtros-extra'), bt = $('#btn-mais-filtros');
+  if (!caixa || !bt) return;
+  caixa.classList.toggle('oculto', !abrir);
+  bt.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+}
+
 function desenharChipsObra() {
+  atualizarContaFiltros();
   const caixa = $('#chips-obra');
   if (!caixa) return;
   const n = S.obrasSel.size;
@@ -852,11 +882,17 @@ function lerFiltros() {
   };
 }
 
-function filtrar() {
-  const f = S.filtros;
+/* Os dois argumentos existem só para a comparação com o período
+   anterior: ela precisa do mesmo recorte (colaborador, setor, obra,
+   disciplina, tipo, busca) numa janela de datas diferente. Sem eles,
+   vale o que está no filtro — nenhuma chamada antiga muda. */
+function filtrar(deAlt, ateAlt) {
+  const f   = S.filtros;
+  const de  = deAlt  !== undefined ? deAlt  : f.de;
+  const ate = ateAlt !== undefined ? ateAlt : f.ate;
   return S.linhas.filter(r => {
-    if (f.de    && r.data < f.de)             return false;
-    if (f.ate   && r.data > f.ate)            return false;
+    if (de      && r.data < de)               return false;
+    if (ate     && r.data > ate)              return false;
     if (f.colab && r.colaborador !== f.colab) return false;
     if (f.setor && r.setor !== f.setor)       return false;
     // obra aceita várias: vazio = todas; com itens = união do que foi marcado
@@ -1015,10 +1051,71 @@ function ordenarPor(arr, campo, desc) {
 /* ───────────────────────────────────────────────────────────────
    8. PEÇAS DE INTERFACE
    ─────────────────────────────────────────────────────────────── */
-function kpi(rot, val, sub, cor) {
-  return '<div class="kpi"><div class="rot">' + rot + '</div>' +
+/* kpi(rótulo, valor, apoio, cor, extras)
+   extras.anel  — fração 0..1; desenha o anel de progresso no canto
+   extras.comp  — HTML da comparação (ver variacao()); vai no rodapé
+   Os quatro primeiros argumentos não mudaram: todas as chamadas
+   antigas continuam valendo. */
+function kpi(rot, val, sub, cor, extras) {
+  const e = extras || {};
+  let anel = '';
+  if (typeof e.anel === 'number' && isFinite(e.anel)) {
+    const p = Math.max(0, Math.min(1, e.anel));
+    anel = '<div class="kpi-anel ' + (cor || '') + '" style="--p:' +
+           (p * 100).toFixed(1) + '%" aria-hidden="true">' +
+           '<span>' + Math.round(p * 100) + '</span></div>';
+  }
+  return '<div class="kpi">' +
+         '<div class="kpi-topo"><div class="rot">' + rot + '</div>' + anel + '</div>' +
          '<div class="val ' + (cor || '') + '">' + val + '</div>' +
-         (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+         (sub ? '<div class="sub">' + sub + '</div>' : '') +
+         (e.comp || '') + '</div>';
+}
+
+/* ── COMPARAÇÃO COM O PERÍODO ANTERIOR ──────────────────────────
+   A janela anterior é do mesmo tamanho em dias e termina na véspera
+   do início do filtro. Só existe quando o filtro tem as duas pontas:
+   sem elas não há tamanho para espelhar, e comparar com "tudo" não
+   diria nada. Nada aqui altera as contas do período atual — é uma
+   segunda leitura dos mesmos dados, para exibição. */
+function janelaAnterior() {
+  const f = S.filtros;
+  if (!f.de || !f.ate || f.ate < f.de) return null;
+  const MS = 86400000;
+  const ini = new Date(f.de  + 'T12:00:00');
+  const fim = new Date(f.ate + 'T12:00:00');
+  const dias = Math.round((fim - ini) / MS) + 1;
+  const aAte = new Date(ini.getTime() - MS);
+  const aDe  = new Date(aAte.getTime() - (dias - 1) * MS);
+  return { de: isoDe(aDe), ate: isoDe(aAte), dias };
+}
+
+/* O filtro termina nos últimos 7 dias? Então ainda falta lançamento
+   retroativo entrar nele, e qualquer comparação com o passado sai
+   pessimista. */
+function janelaAberta() {
+  const f = S.filtros;
+  if (!f.ate) return false;
+  const corte = new Date();
+  corte.setDate(corte.getDate() - 7);
+  return f.ate >= isoDe(corte);
+}
+
+/* Devolve '' quando não dá para comparar: sem janela anterior, ou sem
+   nada lançado nela (dividir por zero daria "∞%", que não informa). */
+function variacao(atual, anterior, maiorEhMelhor) {
+  if (anterior == null || !isFinite(anterior) || anterior === 0) return '';
+  const v = (atual - anterior) / anterior;
+  if (Math.abs(v) < 0.005) {
+    return '<div class="kpi-comp"><span class="dlt dlt-igual">=</span>' +
+           '<span class="dlt-txt">estável</span></div>';
+  }
+  const sobe = v > 0;
+  const cls  = (maiorEhMelhor == null) ? 'dlt-neutro'
+             : (sobe === !!maiorEhMelhor) ? 'dlt-bom' : 'dlt-ruim';
+  return '<div class="kpi-comp"><span class="dlt ' + cls + '">' +
+         (sobe ? '▲' : '▼') + ' ' + fmtPct(Math.abs(v)) + '</span>' +
+         '<span class="dlt-txt">vs. anterior</span></div>';
 }
 
 function secao(titulo, corpo, dica) {
@@ -1327,11 +1424,37 @@ const ABAS_ADMIN = [
   ['custohora',     'Custo/Hora'],
 ];
 
+/* Ícones da navegação. Traço de 1.6 em `currentColor`, então acompanham
+   o tema e o estado (ativo, hover) sem precisar de versão clara e escura.
+   Caixa de 16: qualquer coisa menor vira borrão em tela comum. */
+const ICONES = {
+  resumo:        '<rect x="2" y="2" width="5.5" height="5.5" rx="1"/><rect x="8.5" y="2" width="5.5" height="5.5" rx="1"/><rect x="2" y="8.5" width="5.5" height="5.5" rx="1"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1"/>',
+  colaboradores: '<circle cx="6" cy="5" r="2.4"/><path d="M1.8 13.5c0-2.3 1.9-3.8 4.2-3.8s4.2 1.5 4.2 3.8"/><path d="M11 3.2a2.2 2.2 0 0 1 0 4.2M12.2 13.5c0-1.6-.5-2.6-1.3-3.3"/>',
+  obras:         '<path d="M2 14V4.5L7 2v12"/><path d="M7 7h5.5a1 1 0 0 1 1 1v6"/><path d="M4.3 6.2v.01M4.3 9v.01M9.8 9.5v.01M9.8 11.8v.01"/><path d="M1 14h14"/>',
+  setores:       '<path d="M8 1.8 14.5 5 8 8.2 1.5 5z"/><path d="M1.5 8.2 8 11.4l6.5-3.2M1.5 11.3 8 14.5l6.5-3.2"/>',
+  disciplinas:   '<path d="M8.6 1.8H13a1.2 1.2 0 0 1 1.2 1.2v4.4a1.6 1.6 0 0 1-.5 1.1l-5 5a1.2 1.2 0 0 1-1.7 0L2.5 9a1.2 1.2 0 0 1 0-1.7l5-5a1.6 1.6 0 0 1 1.1-.5z"/><circle cx="11" cy="5" r="1"/>',
+  indireto:      '<circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.4 1.6"/>',
+  custos:        '<path d="M8 1.6v12.8"/><path d="M10.8 4.2H6.6a2 2 0 0 0 0 4h2.8a2 2 0 0 1 0 4H5"/>',
+  fechamento:    '<circle cx="8" cy="8" r="6.2"/><path d="M5.2 8.2 7.1 10l3.7-4"/>',
+  resultado:     '<path d="M1.8 11.5 6 7.2l2.6 2.6L14.2 4"/><path d="M10.5 4h3.7v3.7"/>',
+  cobertura:     '<rect x="2" y="3" width="12" height="11" rx="1.4"/><path d="M2 6.3h12M5.3 1.6v2.6M10.7 1.6v2.6"/><path d="M5.8 10.2 7.2 11.6l3-3"/>',
+  alertas:       '<path d="M8 2.2 14.4 13H1.6z"/><path d="M8 6.4v3M8 11.3v.01"/>',
+  registros:     '<path d="M2.4 4h11.2M2.4 8h11.2M2.4 12h7.6"/>',
+  custohora:     '<rect x="1.6" y="3.6" width="12.8" height="9" rx="1.6"/><path d="M1.6 6.8h12.8"/><path d="M4.4 10h2.4"/>',
+};
+
+const icone = (k) =>
+  '<svg class="ico-aba" viewBox="0 0 16 16" aria-hidden="true" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+  (ICONES[k] || '') + '</svg>';
+
 function montarAbas() {
   const abas = S.admin ? ABAS_ADMIN : ABAS_COMUM;
   S.aba = abas[0][0];
   $('#nav-abas').innerHTML = abas.map(([k, r]) =>
-    '<button data-aba="' + k + '"' + (k === S.aba ? ' class="ativa"' : '') + '>' + r + '</button>').join('');
+    '<button data-aba="' + k + '"' + (k === S.aba ? ' class="ativa"' : '') +
+    ' title="' + esc(r) + '">' + icone(k) +
+    '<span class="rot-aba">' + r + '</span></button>').join('');
 }
 
 /* ── VISÃO GERAL / MEU RESUMO ── */
@@ -1341,21 +1464,48 @@ function telaResumo(linhas) {
   const porDisc = ordenarPor(agrupar(linhas, r => r.disciplina), 'horas', true).slice(0, 10);
   const porTipo = ordenarPor(agrupar(linhas, r => TIPOS[r._tipo].nome), 'horas', true);
 
+  // janela anterior, do mesmo tamanho — só para as setas de variação
+  const ant = janelaAnterior();
+  const kA  = ant ? resumir(filtrar(ant.de, ant.ate)) : null;
+  const vs  = (a, b, bom) => (kA ? { comp: variacao(a, b, bom) } : null);
+  const com = (base, extra) => Object.assign({}, base, extra);
+
+  const taxaIndir = k.trabalhadas ? k.indir / k.trabalhadas : 0;
+
   let html = '<div class="kpis">' +
-    kpi('Horas pagas', fmtHoras(k.horas), fmtN(k.n) + ' lançamentos') +
+    kpi('Horas pagas', fmtHoras(k.horas), fmtN(k.n) + ' lançamentos',
+        '', vs(k.horas, kA && kA.horas, null)) +
     kpi('Produtivas', fmtHoras(k.prod), fmtPct(k.taxaProd) + ' do tempo trabalhado',
-        k.taxaProd >= 0.8 ? 'ok' : k.taxaProd >= 0.6 ? 'warn' : 'bad') +
-    kpi('Tempo indireto', fmtHoras(k.indir), 'reunião, gestão, serviço interno, treinamento') +
+        k.taxaProd >= 0.8 ? 'ok' : k.taxaProd >= 0.6 ? 'warn' : 'bad',
+        com({ anel: k.taxaProd }, vs(k.prod, kA && kA.prod, true))) +
+    kpi('Tempo indireto', fmtHoras(k.indir), 'reunião, gestão, serviço interno, treinamento',
+        '', com({ anel: taxaIndir }, vs(k.indir, kA && kA.indir, false))) +
     kpi('Faltas e atestados', fmtHoras(k.absen), fmtPct(k.taxaAbsen) + ' do tempo pago',
-        k.taxaAbsen > 0.08 ? 'warn' : '') +
+        k.taxaAbsen > 0.08 ? 'warn' : '',
+        com({ anel: k.taxaAbsen }, vs(k.absen, kA && kA.absen, false))) +
     kpi(S.admin ? 'Dias-pessoa lançados' : 'Dias lançados', fmtN(k.nDias),
-        'média de ' + fmtHoras(k.mediaDia) + ' h/dia') +
-    kpi(S.admin ? 'Obras ativas' : 'Minhas obras', fmtN(k.nObras), fmtN(k.nDiscs) + ' disciplinas') +
-    (S.admin ? kpi('Colaboradores', fmtN(k.nColabs), '') : '') +
+        'média de ' + fmtHoras(k.mediaDia) + ' h/dia',
+        '', vs(k.nDias, kA && kA.nDias, null)) +
+    kpi(S.admin ? 'Obras ativas' : 'Minhas obras', fmtN(k.nObras), fmtN(k.nDiscs) + ' disciplinas',
+        '', vs(k.nObras, kA && kA.nObras, null)) +
+    (S.admin ? kpi('Colaboradores', fmtN(k.nColabs), '',
+        '', vs(k.nColabs, kA && kA.nColabs, null)) : '') +
     (S.admin && CUSTOS.quantos()
-      ? kpi('Custo do período', fmtBRL(k.custo), fmtBRL(k.custoIndir) + ' em tempo indireto')
+      ? kpi('Custo do período', fmtBRL(k.custo), fmtBRL(k.custoIndir) + ' em tempo indireto',
+            '', vs(k.custo, kA && kA.custo, false))
       : '') +
-    '</div>';
+    '</div>' +
+    (ant ? '<p class="kpi-nota">As setas comparam com <b>' + fmtData(ant.de) +
+           ' a ' + fmtData(ant.ate) + '</b> — os ' + fmtN(ant.dias) +
+           ' dias imediatamente anteriores, com o mesmo recorte.' +
+           /* Período aberto compara maçã com maçã madura: o passado já
+              recebeu os lançamentos atrasados, os últimos dias ainda não.
+              Sem este aviso a queda parece real e não é. */
+           (janelaAberta() ? ' <b>Atenção:</b> o período escolhido termina nos ' +
+             'últimos dias — lançamentos retroativos ainda vão entrar, então a ' +
+             'queda tende a diminuir sozinha.' : '') + '</p>'
+         : '<p class="kpi-nota">Escolha um período com início e fim para ver a ' +
+           'comparação com os dias anteriores.</p>');
 
   if (k.fora > 0) {
     html += '<div class="box" style="margin-bottom:18px;border-color:var(--border-strong)">' +
@@ -1583,9 +1733,10 @@ function telaIndireto(linhas) {
 
   let html = '<div class="kpis">' +
     kpi('Tempo indireto', fmtHoras(k.indir), fmtPct(k.base ? k.indir / k.base : 0) + ' do trabalhado',
-        (k.base && k.indir / k.base > 0.3) ? 'warn' : '') +
+        (k.base && k.indir / k.base > 0.3) ? 'warn' : '',
+        { anel: k.base ? k.indir / k.base : 0 }) +
     kpi('Ausências', fmtHoras(k.aus), fmtN(ausencias.length) + ' lançamentos') +
-    kpi('Produtivas', fmtHoras(k.prod), fmtPct(k.taxaProd), 'ok') +
+    kpi('Produtivas', fmtHoras(k.prod), fmtPct(k.taxaProd), 'ok', { anel: k.taxaProd }) +
     '</div>';
 
   html += secao('Composição do tempo indireto',
@@ -1973,7 +2124,8 @@ function telaCustoHora(linhas) {
     kpi(filtrando ? 'No recorte' : 'Colaboradores ativos', fmtN(ativos.length),
         filtrando ? 'lançaram hora no filtro atual' : 'vindos do cadastro, não dos lançamentos') +
     kpi('Com valor cadastrado', fmtN(cadastradosAtivos), 'de ' + fmtN(ativos.length) + ' ativos',
-        cadastradosAtivos === ativos.length ? 'ok' : 'warn') +
+        cadastradosAtivos === ativos.length ? 'ok' : 'warn',
+        { anel: ativos.length ? cadastradosAtivos / ativos.length : 0 }) +
     kpi('Faltando', fmtN(vazios.length), 'ativos ainda sem valor/hora',
         vazios.length ? 'bad' : 'ok') +
     (inativos.length ? kpi('Fora da lista, com horas', fmtN(inativos.length),
@@ -3470,7 +3622,11 @@ function ligarEventos() {
   });
 
   ['#f-de','#f-ate','#f-colab','#f-setor','#f-disc','#f-tipo']
-    .forEach(s => $(s).addEventListener('change', render));
+    .forEach(s => $(s).addEventListener('change', () => { atualizarContaFiltros(); render(); }));
+
+  $('#btn-mais-filtros').addEventListener('click', () => {
+    mostrarFiltrosExtra($('#filtros-extra').classList.contains('oculto'));
+  });
 
   // Obra: escolher ADICIONA à lista em vez de trocar. O select volta para
   // "todas as obras" logo em seguida, pronto para a próxima escolha.
@@ -3518,6 +3674,7 @@ function ligarEventos() {
       .forEach(s => { $(s).value = ''; });
     S.obrasSel.clear();
     desenharChipsObra();
+    atualizarContaFiltros();
     render();
   });
 

@@ -19,7 +19,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="styles.css?v=202610141700">
+<link rel="stylesheet" href="styles.css?v=202610150930">
 </head>
 <body>
 
@@ -56,119 +56,90 @@
 <!-- ══ APLICAÇÃO ══ -->
 <div id="app" class="oculto">
 
-  <!-- cabeçalho + abas viajam juntos na rolagem -->
-  <div class="topo-fixo">
-    <div id="barra-progresso" aria-hidden="true"></div>
-
-    <header class="topo">
-      <div class="topo-marca">
-        <h1>Painel de Produtividade</h1>
+  <!-- ══ NAVEGAÇÃO LATERAL ══ ──────────────────────────────────────
+       Treze abas numa faixa horizontal obrigavam a rolar de lado e não
+       cabiam com rótulo. Em coluna cabem todas, com ícone, e a área de
+       conteúdo ganha a largura inteira.
+       ─────────────────────────────────────────────────────────────── -->
+  <aside class="lateral" id="lateral">
+    <div class="lateral-marca">
+      <span class="marca-risco" aria-hidden="true"></span>
+      <div class="marca-txt">
+        <strong>Produtividade</strong>
         <span class="selo" id="selo-papel">—</span>
       </div>
+    </div>
 
+    <nav class="abas" id="nav-abas" aria-label="Seções do painel"></nav>
+
+    <div class="lateral-pe">
+      <span class="selo" id="selo-tempo-real" title="Estado da conexão ao vivo">⏱ periódico</span>
+      <div class="lateral-pe-botoes">
+        <button id="btn-tema" class="ghost icone" title="Alternar tema" aria-label="Alternar entre tema claro e escuro">☀</button>
+        <button id="btn-sair" class="ghost" title="Encerrar a sessão">Sair</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="coluna">
+
+    <header class="topo">
+      <div id="barra-progresso" aria-hidden="true"></div>
       <div class="topo-info">
         <span class="muted" id="resumo-base"></span>
         <span id="txt-atualizado"></span>
       </div>
-
       <div class="topo-dir">
-        <span class="selo" id="selo-tempo-real" title="Estado da conexão ao vivo">⏱ periódico</span>
-        <button id="btn-tema" class="ghost icone" title="Alternar tema" aria-label="Alternar entre tema claro e escuro">☀</button>
         <button id="btn-atualizar" class="secundario" title="Reler os lançamentos agora">
           <span class="ico-girar" aria-hidden="true">⟳</span>
           <span class="rotulo-botao">Atualizar</span>
         </button>
-        <button id="btn-sair" class="ghost" title="Encerrar a sessão">Sair</button>
       </div>
     </header>
-
-    <div class="abas-envelope">
-      <nav class="abas" id="nav-abas" aria-label="Seções do painel"></nav>
-    </div>
-
-  </div>
 
   <div class="wrap">
 
     <!-- aviso de leitura incompleta / modo espelho (preenchido pelo app.js) -->
     <div id="aviso-integridade" class="aviso oculto" role="status"></div>
 
-    <!-- ══ FILTROS ══ -->
-    <section class="filtros barra-filtros" aria-label="Filtros">
+    <!-- ══ FILTROS ══ ─────────────────────────────────────────────
+         Uma linha só. Os recortes por dimensão ficam atrás do botão
+         "Filtros", que mostra quantos estão ativos — assim o painel
+         não gasta 200px do topo de toda tela com campos vazios.
+         ──────────────────────────────────────────────────────────── -->
+    <section class="barra-filtros" aria-label="Filtros">
 
-      <!-- principais: recorte de tempo e busca livre -->
-      <div class="filtros-grupo">
+      <div class="filtros-linha">
+        <select id="f-periodo" class="fil-periodo" title="Atalho de período" aria-label="Período">
+          <option value="">personalizado…</option>
+          <option value="mes">Este mês</option>
+          <option value="mes-1">Mês passado</option>
+          <option value="90">Últimos 90 dias</option>
+          <option value="ano">Este ano</option>
+          <option value="tudo">Tudo</option>
+        </select>
 
-        <div class="campo-filtro">
-          <label for="f-periodo">Período</label>
-          <select id="f-periodo" title="Atalhos de período">
-            <option value="">personalizado…</option>
-            <option value="mes">Este mês</option>
-            <option value="mes-1">Mês passado</option>
-            <option value="90">Últimos 90 dias</option>
-            <option value="ano">Este ano</option>
-            <option value="tudo">Tudo</option>
-          </select>
+        <div class="par-datas">
+          <input type="date" id="f-de" title="Data inicial" aria-label="Data inicial">
+          <span class="sep">até</span>
+          <input type="date" id="f-ate" title="Data final" aria-label="Data final">
         </div>
 
-        <div class="campo-filtro campo-datas">
-          <label for="f-de">Intervalo de datas</label>
-          <div class="par-datas">
-            <input type="date" id="f-de" title="Data inicial" aria-label="Data inicial">
-            <span class="sep">até</span>
-            <input type="date" id="f-ate" title="Data final" aria-label="Data final">
-          </div>
+        <div class="campo-busca">
+          <svg class="ico-busca" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <input type="text" id="f-busca" placeholder="buscar tarefa ou observação…">
         </div>
 
-        <div class="campo-filtro campo-busca">
-          <label for="f-busca">Buscar</label>
-          <input type="text" id="f-busca" placeholder="tarefa ou observação…">
-        </div>
-
-      </div>
-
-      <!-- secundários: recortes por dimensão -->
-      <div class="filtros-grupo">
-
-        <div class="campo-filtro so-admin">
-          <label for="f-colab">Colaborador</label>
-          <select id="f-colab" class="so-admin"><option value="">todos</option></select>
-        </div>
-
-        <div class="campo-filtro so-admin">
-          <label for="f-setor">Setor</label>
-          <select id="f-setor" class="so-admin"><option value="">todos</option></select>
-        </div>
-
-        <div class="campo-filtro">
-          <label for="f-obra">Obra / Projeto</label>
-          <select id="f-obra"><option value="">todas</option></select>
-        </div>
-
-        <div class="campo-filtro">
-          <label for="f-disc">Disciplina</label>
-          <select id="f-disc"><option value="">todas</option></select>
-        </div>
-
-        <div class="campo-filtro">
-          <label for="f-tipo">Tipo de hora</label>
-          <select id="f-tipo"><option value="">todos</option></select>
-        </div>
-
-      </div>
-
-      <!-- obras escolhidas (o filtro de obra aceita várias) -->
-      <div id="chips-obra" class="chips oculto" aria-label="Obras no filtro"></div>
-
-      <!-- ações e estado do resultado -->
-      <div class="filtros-acoes">
-        <label class="opcao so-admin" id="lbl-modo-sistema"
-               title="Usa os mesmos critérios do Registro de Horas: conta serviço interno e reunião como obra, soma as obras paradas e mostra as horas em HH:MM">
-          <input type="checkbox" id="chk-modo-sistema">
-          igual ao sistema
-        </label>
-
-        <button id="btn-limpar" class="ghost">limpar filtros</button>
+        <button id="btn-mais-filtros" class="ghost" aria-expanded="false" aria-controls="filtros-extra">
+          <svg viewBox="0 0 16 16" aria-hidden="true" class="ico">
+            <path d="M2 4h12M4.5 8h7M7 12h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <span>Filtros</span>
+          <span id="sel-filtros" class="conta oculto">0</span>
+        </button>
 
         <span id="contador"></span>
 
@@ -177,6 +148,26 @@
           <span class="rotulo-botao">Excel</span>
         </button>
       </div>
+
+      <!-- recortes por dimensão: escondidos até alguém precisar -->
+      <div id="filtros-extra" class="filtros-extra oculto">
+        <select id="f-colab" class="so-admin" aria-label="Colaborador"><option value="">todos os colaboradores</option></select>
+        <select id="f-setor" class="so-admin" aria-label="Setor"><option value="">todos os setores</option></select>
+        <select id="f-obra" aria-label="Obra"><option value="">todas as obras</option></select>
+        <select id="f-disc" aria-label="Disciplina"><option value="">todas as disciplinas</option></select>
+        <select id="f-tipo" aria-label="Tipo de hora"><option value="">todos os tipos de hora</option></select>
+
+        <label class="opcao so-admin" id="lbl-modo-sistema"
+               title="Usa os mesmos critérios do Registro de Horas: conta serviço interno e reunião como obra, soma as obras paradas e mostra as horas em HH:MM">
+          <input type="checkbox" id="chk-modo-sistema">
+          igual ao sistema
+        </label>
+
+        <button id="btn-limpar" class="ghost">limpar</button>
+      </div>
+
+      <!-- obras escolhidas (o filtro de obra aceita várias) -->
+      <div id="chips-obra" class="chips oculto" aria-label="Obras no filtro"></div>
 
     </section>
 
@@ -189,6 +180,7 @@
       <code>registros</code> ainda não tem um campo próprio para isso.
     </p>
 
+    </div>
   </div>
 </div>
 
@@ -206,6 +198,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="app.js?v=202610141700"></script>
+<script src="app.js?v=202610150930"></script>
 </body>
 </html>
