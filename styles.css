@@ -372,7 +372,7 @@ h1, h2, h3 { line-height: var(--lh-tight); letter-spacing: var(--track-tight); }
 /* etiqueta em caixa alta — label de campo, cabeçalho de tabela, rótulo de KPI */
 .rotulo,
 label.campo,
-.secao > h2,
+.secao h2,
 .kpi .rot,
 th {
   font-size: var(--fs-micro);
@@ -1295,17 +1295,39 @@ button:hover:not(:disabled) .ico-girar { transform: rotate(180deg); }
 /* ═══════════════════════════════════════════════════════════════════
    11. CARTÕES E SEÇÕES
    ═══════════════════════════════════════════════════════════════════ */
-.secao { margin-bottom: var(--space-6); }
-
-.secao > h2 {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  color: var(--text-secondary);
-  margin-bottom: var(--space-3);
+/* ── A SEÇÃO É O CARTÃO ──────────────────────────────────────────
+   Cabeçalho em cima (titulo, explicacao, acoes), corpo encostado nas
+   bordas embaixo. Antes o titulo ficava solto sobre o fundo da pagina
+   e so a tabela tinha moldura: com oito secoes seguidas nao dava para
+   ver onde uma acabava e a outra comecava. */
+.secao {
+  margin-bottom: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;      /* a tabela encosta na borda sem vazar o raio */
 }
-.secao > h2 .dica {
+
+.secao-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+/* o bloco de texto e quem encolhe quando falta largura; os botoes nao */
+.secao-id    { min-width: 0; flex: 1 1 280px; }
+.secao-acoes { flex: none; display: flex; align-items: center; gap: var(--space-2); }
+
+.secao > .secao-topo > .secao-id > h2 {
+  color: var(--text-secondary);
+  margin: 0;
+}
+.secao .dica {
+  margin: 5px 0 0;
   font-size: var(--fs-xs);
   font-weight: 400;
   letter-spacing: 0;
@@ -1313,6 +1335,147 @@ button:hover:not(:disabled) .ico-girar { transform: rotate(180deg); }
   color: var(--text-faint);
   line-height: var(--lh-snug);
 }
+/* uma secao sem titulo nem explicacao nao precisa de cabecalho vazio */
+.secao-topo:not(:has(h2)):not(:has(.dica)):not(:has(.secao-acoes)) { display: none; }
+
+/* O corpo nao tem recuo proprio: quem define respiro e o que vem
+   dentro. Assim a tabela encosta nas bordas e o grafico respira. */
+.secao-corpo { min-width: 0; }
+
+/* O .box que vem direto no corpo perde a moldura: ela seria uma
+   segunda borda a 1px da primeira. Os .box dentro de .grid2 mantem a
+   moldura, porque ali eles sao cartoes irmaos de verdade. */
+.secao-corpo > .box {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* A tabela continua encostando nas bordas (o recuo negativo de .box
+   segue valendo); so o arredondamento sai, senao fica um entalhe
+   logo abaixo do cabecalho da secao. */
+.secao-corpo > .box > .tab-caixa > .tabela-rolagem:only-child { border-radius: 0; }
+
+/* ── SPOTLIGHT ───────────────────────────────────────────────────
+   Tecnica do "Spotlight Card" de @jahed (21st.dev): um brilho que
+   segue o ponteiro. La e React + Tailwind; aqui e um ::after com
+   radial-gradient posicionado por duas variaveis que o JS escreve.
+
+   Serve para alguma coisa: com oito cartoes iguais na tela, o brilho
+   diz qual esta sob o cursor sem precisar mexer em cor de borda nem
+   em sombra — e e o unico efeito que nao desloca nada (sem reflow).
+
+   --mx/--my vem do ponteiro; o padrao 50% deixa o brilho centrado
+   caso o JS nao rode. A opacidade e que liga e desliga. */
+.kpi, .secao {
+  --mx: 50%;
+  --my: 50%;
+  --luz: 0;
+}
+.kpi::after, .secao::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;      /* nunca rouba o clique da tabela */
+  z-index: 0;
+  opacity: var(--luz);
+  transition: opacity var(--t-slow);
+  background: radial-gradient(
+    380px circle at var(--mx) var(--my),
+    color-mix(in srgb, var(--accent) 13%, transparent),
+    transparent 42%);
+}
+/* a secao nao era posicionada; o ::after precisa disso para se
+   ancorar nela, e nao no primeiro ancestral posicionado acima */
+.secao { position: relative; }
+/* o conteudo fica acima do brilho */
+.secao-topo, .secao-corpo { position: relative; z-index: 1; }
+.kpi > * { position: relative; z-index: 1; }
+
+/* No cartao de estado (ok/warn/bad) o brilho usa a cor do estado:
+   um halo verde num cartao verde, vermelho num vermelho. */
+.kpi:has(.val.ok)   { --luz-cor: var(--success); }
+.kpi:has(.val.warn) { --luz-cor: var(--warning); }
+.kpi:has(.val.bad)  { --luz-cor: var(--danger);  }
+.kpi::after {
+  background: radial-gradient(
+    300px circle at var(--mx) var(--my),
+    color-mix(in srgb, var(--luz-cor, var(--accent)) 15%, transparent),
+    transparent 45%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi::after, .secao::after { transition: none; }
+}
+/* sem ponteiro (toque) o efeito nao tem como existir: nao desenha */
+@media (hover: none) {
+  .kpi::after, .secao::after { display: none; }
+}
+
+
+/* ── BARRA DE UMA ABA SÓ ─────────────────────────────────────────
+   Recorte e acoes que valem so para a tela aberta. Fica acima das
+   secoes, separada delas, para nao parecer cabecalho da primeira. */
+.barra-aba {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.barra-aba-campos {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.campo-rot {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* `select` nasce com width:100% na regra global de formulário; num
+   item flex isso vira a base de cálculo e empurra os vizinhos para a
+   linha de baixo. Largura fixa resolve.
+   background-color, não o atalho `background:` — ver nota em .filtros:
+   o atalho apagaria a seta desenhada do select. */
+.fil-aba {
+  width: auto;
+  flex: 0 0 240px;
+  min-height: var(--h-control-sm);
+  padding: 6px 30px 6px 10px;
+  font-size: var(--fs-sm);
+  background-color: var(--surface-elevated);
+}
+.aba-recorte {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border);
+}
+.aba-recorte b { color: var(--text-secondary); }
+
+@media (max-width: 560px) {
+  .barra-aba, .barra-aba-campos { align-items: stretch; flex-direction: column; }
+  .fil-aba { min-width: 0; width: 100%; }
+  .aba-recorte { padding-left: 0; border-left: 0; }
+}
+
+/* blocos que nao sao tabela precisam de respiro proprio */
+.secao-corpo > .grid2,
+.secao-corpo > .gwrap { padding: var(--space-4); }
+/* dentro da secao os .box do grid2 sao cartoes irmaos: mantem a
+   moldura, perdem a sombra (ja estao sobre uma superficie elevada) */
+.secao-corpo > .grid2 > .box { box-shadow: none; }
 
 .box {
   background: var(--surface);
@@ -1473,6 +1636,9 @@ button:hover:not(:disabled) .ico-girar { transform: rotate(180deg); }
   left: 0;
   top: 0;
   bottom: 0;
+  /* acima do brilho do spotlight: a faixa diz o estado do cartao e
+     nao pode ficar lavada por um halo passando por cima */
+  z-index: 2;
   width: 3px;
   background: var(--border-strong);
   transition: background var(--t);
@@ -1546,6 +1712,24 @@ table {
   font-size: var(--fs-sm);
 }
 
+/* ── QUEM FICA COM A FOLGA DE LARGURA ────────────────────────────
+   Com largura 100% e layout automatico, o navegador reparte a sobra
+   entre TODAS as colunas na mesma proporcao. Numa tela larga isso
+   abria vaos enormes: o nome do setor ficava a um palmo da data, e a
+   barrinha da coluna numerica flutuava longe do numero que mede.
+
+   A primeira coluna e sempre o nome (colaborador, obra, setor), o
+   texto mais longo da linha. Dar a folga toda a ela encosta as demais
+   umas nas outras e a linha volta a ser lida de uma vez. */
+table th:first-child,
+table td:first-child { width: 100%; }
+
+/* ...a nao ser que exista uma coluna de texto livre (tarefa,
+   observacao): ai e ela quem deve esticar, nao o nome. */
+table:has(td.livre) th:first-child,
+table:has(td.livre) td:first-child { width: auto; }
+table td.livre { width: 100%; }
+
 th {
   /* o contexto de sticky aqui e o .tabela-rolagem, nao a janela:
      overflow-x: auto ja cria um container de rolagem nos dois eixos.
@@ -1589,6 +1773,353 @@ td.livre {
   color: var(--text-muted);
   font-size: var(--fs-xs);
   line-height: var(--lh-snug);
+}
+
+/* ── ETIQUETA DE SETOR ───────────────────────────────────────────
+   Como as etiquetas do quadro do Jira. A matiz (--h) vem do nome,
+   escrita pelo JS; saturacao e luminosidade saem do tema, entao a
+   mesma etiqueta funciona no claro e no escuro sem segunda regra. */
+.chip-setor {
+  --s: 62%;
+  --l: 72%;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  line-height: 1.6;
+  color: hsl(var(--h) var(--s) var(--l));
+  background: hsl(var(--h) var(--s) var(--l) / 0.13);
+  border: 1px solid hsl(var(--h) var(--s) var(--l) / 0.28);
+}
+:root[data-tema="claro"] .chip-setor {
+  --s: 55%;
+  --l: 34%;
+  background: hsl(var(--h) var(--s) var(--l) / 0.09);
+  border-color: hsl(var(--h) var(--s) var(--l) / 0.22);
+}
+
+/* ── BARRA DE CAPACIDADE ─────────────────────────────────────────
+   Como a visao Workload do ClickUp, com o sentido invertido: aqui
+   cobertura alta e boa, entao o verde fica em cima. */
+.cap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 146px;
+}
+.cap-trilho {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-faint) 20%, transparent);
+  overflow: hidden;
+}
+.cap-fita {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--cap-cor);
+  transition: width var(--t-slow);
+}
+.cap-num {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--cap-cor);
+}
+.cap.ok   { --cap-cor: var(--success); }
+.cap.warn { --cap-cor: var(--warning); }
+.cap.bad  { --cap-cor: var(--danger);  }
+
+@media (prefers-reduced-motion: reduce) {
+  .cap-fita { transition: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   GRADE DE CARGA — da visao Workload do ClickUp
+   ═══════════════════════════════════════════════════════════════════ */
+/* Sem margem negativa: a grade e filha direta de .secao-corpo, que
+   nao tem recuo proprio. Com recuo negativo a coluna grudada a
+   esquerda ficava 16px fora do cartao e o .secao (overflow:hidden)
+   comia a primeira letra de cada nome. */
+.gc-rolagem {
+  overflow: auto;
+  max-height: 62vh;        /* 40 pessoas nao cabem na tela: rola dentro */
+  overscroll-behavior: contain;
+}
+table.gc {
+  width: max-content;      /* largura pelo conteudo, nao pela caixa */
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+/* A coluna do nome fica parada na horizontal e o cabecalho na
+   vertical — como a coluna de pessoas do ClickUp. O canto onde os
+   dois se cruzam precisa de z-index maior que os dois, senao a
+   primeira celula passa por baixo ao rolar na diagonal. */
+table.gc th.gc-nome {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 1%;
+  min-width: 190px;
+  padding: 7px var(--space-3);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border);
+}
+table.gc thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-hover);
+  border-bottom: 1px solid var(--border-strong);
+  cursor: default;
+}
+table.gc thead th.gc-nome { z-index: 4; }
+
+.gc-pessoa {
+  display: block;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+
+th.gc-dia {
+  padding: 6px 4px;
+  min-width: 46px;
+  text-align: center;
+  white-space: nowrap;
+}
+.gc-sem {
+  display: block;
+  font-size: 9.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.gc-data {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+th.gc-hoje .gc-sem, th.gc-hoje .gc-data { color: var(--accent); }
+th.gc-hoje { box-shadow: inset 0 -2px 0 var(--accent); }
+
+td.gc-cel {
+  padding: 3px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+td.gc-tot, th.gc-tot {
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* o bloco e a celula pintada; e ele que carrega a cor da carga */
+.gc-bloco {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  min-width: 40px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  transition: transform var(--t-fast), filter var(--t-fast);
+}
+.gc-bloco:hover { transform: scale(1.12); filter: brightness(1.15); }
+.gc-h { opacity: .92; }
+
+/* A celula vazia precisa SER VISTA — ela e a informacao principal
+   desta tela. Hachura, nao fundo liso: fundo liso se confunde com o
+   proprio cartao e o buraco desaparece. */
+.gc-bloco.sem {
+  background: repeating-linear-gradient(
+    -45deg, transparent, transparent 3px,
+    color-mix(in srgb, var(--danger) 30%, transparent) 3px,
+    color-mix(in srgb, var(--danger) 30%, transparent) 4px);
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent);
+}
+.gc-bloco.baixa {
+  background: color-mix(in srgb, var(--warning) 26%, transparent);
+  color: var(--warning-text);
+}
+.gc-bloco.cheia {
+  background: color-mix(in srgb, var(--success) 26%, transparent);
+  color: var(--success-text);
+}
+.gc-bloco.acima {
+  background: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger-text);
+}
+
+tr.gc-rodape th, tr.gc-rodape td {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface-hover);
+  border-top: 1px solid var(--border-strong);
+  border-bottom: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+tr.gc-rodape th.gc-nome {
+  z-index: 3;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+}
+
+.gc-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.gc-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.gc-legenda i.gc-bloco {
+  display: inline-block;
+  width: 22px;
+  min-width: 0;
+  height: 13px;
+}
+.gc-nota {
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--space-4) var(--space-4);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--text-faint);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   QUADRO POR SITUACAO — do quadro do Jira
+   ═══════════════════════════════════════════════════════════════════ */
+.quadro {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.qd-coluna {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--radius);
+  background: var(--surface-elevated);
+}
+.qd-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 2px solid var(--qd-cor, var(--border-strong));
+}
+.qd-conta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--qd-cor, var(--text-muted));
+  background: color-mix(in srgb, var(--qd-cor, var(--text-faint)) 14%, transparent);
+}
+.qd-topo.ok    { --qd-cor: var(--success); }
+.qd-topo.warn  { --qd-cor: var(--warning); }
+.qd-topo.bad   { --qd-cor: var(--danger);  }
+.qd-topo.nunca { --qd-cor: var(--text-faint); }
+
+/* a pilha rola sozinha: com 70 pessoas numa coluna, a pagina inteira
+   viraria uma rolagem so */
+.qd-pilha {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2);
+  max-height: 460px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.qd-cartao {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--qd-cor, var(--border-strong));
+  transition: border-color var(--t-fast), transform var(--t-fast);
+}
+.qd-cartao.ok    { --qd-cor: var(--success); }
+.qd-cartao.warn  { --qd-cor: var(--warning); }
+.qd-cartao.bad   { --qd-cor: var(--danger);  }
+.qd-cartao.nunca { --qd-cor: var(--text-faint); }
+.qd-cartao:hover { border-color: var(--border-strong); transform: translateX(2px); }
+
+.qd-nome {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: var(--lh-snug);
+  margin-bottom: 5px;
+}
+.qd-pe {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+.qd-data {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.qd-dias {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--qd-cor);
+}
+.qd-vazio {
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+@media (max-width: 1100px) { .quadro { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px)  { .quadro { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) {
+  .gc-bloco:hover, .qd-cartao:hover { transform: none; }
 }
 
 /* zebra quase imperceptível + destaque na linha sob o cursor */
@@ -1783,7 +2314,7 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
 }
 
 #detalhe-corpo { padding: var(--space-5); }
-#detalhe-corpo .secao > h2 { margin-bottom: var(--space-2); }
+#detalhe-corpo .secao-topo { padding: var(--space-3); }
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2092,7 +2623,7 @@ tr.linha-clicavel:hover td:first-child::after { color: var(--primary-hover); }
   .kpi { padding: var(--space-3); }
   .kpi .val { font-size: 22px; }
 
-  .secao > h2 .dica { display: none; }
+  .secao .dica { display: none; }
 
   td, th { padding: 9px var(--space-2); }
   td.livre { min-width: 180px; }

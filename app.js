@@ -951,11 +951,37 @@ function diasUteisEntre(deISO, ateISO) {
   return dias;
 }
 
+/* Quantos dias úteis existem entre as duas datas, as duas inclusive.
+   Mesmo resultado de diasUteisEntre().length, sem montar o array:
+   as semanas inteiras valem 5 cada uma, e só a sobra (no máximo 6
+   dias) é contada no laço.
+
+   Isto é o caminho quente da aba Cobertura: era chamado uma vez por
+   pessoa e uma vez por obra, e cada chamada percorria o período dia a
+   dia criando dois objetos Date por dia. Com 100 pessoas e 300 obras
+   num período de um ano, passavam de 100 mil construções de Date. */
+function contarDiasUteis(deISO, ateISO) {
+  if (!deISO || !ateISO) return 0;
+  const DIA = 86400000;
+  const a = Date.parse(deISO  + 'T12:00:00');
+  const b = Date.parse(ateISO + 'T12:00:00');
+  if (!isFinite(a) || !isFinite(b) || b < a) return 0;
+  const dias    = Math.round((b - a) / DIA) + 1;
+  const semanas = Math.floor(dias / 7);
+  let total = semanas * 5;
+  let dow   = new Date(a).getDay();
+  for (let i = dias - semanas * 7; i > 0; i--) {
+    if (dow >= 1 && dow <= 5) total++;
+    dow = (dow + 1) % 7;
+  }
+  return total;
+}
+
 function diasUteisDesde(iso) {
   if (!iso) return null;
   const hoje = isoDe(new Date());
   if (iso >= hoje) return 0;
-  return Math.max(0, diasUteisEntre(iso, hoje).length - 1);
+  return Math.max(0, contarDiasUteis(iso, hoje) - 1);
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -1118,10 +1144,26 @@ function variacao(atual, anterior, maiorEhMelhor) {
          '<span class="dlt-txt">vs. anterior</span></div>';
 }
 
-function secao(titulo, corpo, dica) {
-  return '<div class="secao"><h2>' + titulo +
-         (dica ? '<span class="dica">' + dica + '</span>' : '') +
-         '</h2>' + corpo + '</div>';
+/* secao(título, corpo, dica, ações)
+   A seção É o cartão: cabeçalho próprio em cima, corpo encostado nas
+   bordas embaixo. Antes o título ficava solto sobre o fundo da página
+   e só a tabela tinha moldura — com oito seções seguidas não dava para
+   ver onde uma acabava e a outra começava.
+
+   `ações` é opcional e recebe botões que ficam à direita do título
+   (ex.: o "Baixar Excel" das listas). Os três primeiros argumentos não
+   mudaram: todas as chamadas antigas continuam valendo. */
+function secao(titulo, corpo, dica, acoes) {
+  return '<section class="secao">' +
+    '<div class="secao-topo">' +
+      '<div class="secao-id">' +
+        '<h2>' + titulo + '</h2>' +
+        (dica ? '<p class="dica">' + dica + '</p>' : '') +
+      '</div>' +
+      (acoes ? '<div class="secao-acoes">' + acoes + '</div>' : '') +
+    '</div>' +
+    '<div class="secao-corpo">' + corpo + '</div>' +
+  '</section>';
 }
 
 function box(html)    { return '<div class="box">' + html + '</div>'; }
@@ -1137,6 +1179,197 @@ function grafico(id, alto) {
 }
 function tagTipo(t) {
   return '<span class="tag ' + TIPOS[t].grupo + '">' + TIPOS[t].nome + '</span>';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GRADE DE CARGA — da visão Workload do ClickUp
+   ═══════════════════════════════════════════════════════════════
+   Pessoas nas linhas, dias úteis nas colunas, uma célula por dia
+   pintada conforme a carga lançada.
+
+   Por que isto existe e a tabela não resolve: a tabela diz "faltam
+   13 dias" — um número. A grade diz QUAIS dias, e em que formato:
+   buraco solto no meio da semana é esquecimento; faixa contínua é
+   férias ou afastamento que ninguém registrou. São dois problemas
+   diferentes, e o número sozinho não distingue.
+
+   Faixas de carga (JORNADA = 8h):
+     sem        nada lançado
+     < 6h       abaixo       âmbar
+     6h a 9h    normal       verde
+     > 9h       acima        vermelho  (como o "over capacity" do ClickUp)
+
+   Uma coluna por dia útil com o período em "Tudo" daria 260 colunas.
+   A grade mostra os últimos DIAS_GRADE dias do período e declara o
+   corte no rodapé — o resto continua na tabela, que é quem responde
+   "no período inteiro". */
+const JORNADA     = 8;
+const DIAS_GRADE  = 20;
+
+function faixaCarga(h) {
+  if (!h)        return 'sem';
+  if (h < 6)     return 'baixa';
+  if (h <= 9)    return 'cheia';
+  return 'acima';
+}
+
+function gradeCarga(pessoas, uteis) {
+  const dias = uteis.slice(-DIAS_GRADE);
+  if (!dias.length || !pessoas.length) return '';
+
+  // quem tem mais dia descoberto primeiro: a grade existe para achar
+  // buraco, então o buraco tem que estar no topo
+  const linhas = [...pessoas]
+    .sort((a, b) => (b.faltam - a.faltam) || a.chave.localeCompare(b.chave, 'pt-BR'))
+    .slice(0, 40);
+
+  const diaCurto = (iso) => {
+    const p = iso.split('-');
+    return p[2] + '/' + p[1];
+  };
+  const semana = (iso) =>
+    ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(iso + 'T12:00:00').getDay()];
+
+  const cab = '<tr><th class="gc-nome">Colaborador</th>' +
+    dias.map(d => '<th class="gc-dia' + (d === isoDe(new Date()) ? ' gc-hoje' : '') + '">' +
+      '<span class="gc-sem">' + semana(d) + '</span>' +
+      '<span class="gc-data">' + diaCurto(d) + '</span></th>').join('') +
+    '<th class="gc-tot">Total</th></tr>';
+
+  const corpo = linhas.map(p => {
+    const celulas = dias.map(d => {
+      const h = (p.porDia && p.porDia.get(d)) || 0;
+      const f = faixaCarga(h);
+      return '<td class="gc-cel"><span class="gc-bloco ' + f + '" title="' +
+             esc(p.chave) + ' · ' + fmtData(d) + ' · ' +
+             (h ? fmtHoras(h) + ' h' : 'nada lançado') + '">' +
+             (h ? '<span class="gc-h">' + fmtHoras(h) + '</span>' : '') +
+             '</span></td>';
+    }).join('');
+    const total = dias.reduce((s, d) => s + ((p.porDia && p.porDia.get(d)) || 0), 0);
+    return '<tr><th class="gc-nome">' +
+           '<span class="gc-pessoa">' + esc(p.chave) + '</span>' +
+           chipSetor(p.setor) + '</th>' + celulas +
+           '<td class="gc-tot num">' + fmtHoras(total) + '</td></tr>';
+  }).join('');
+
+  // rodapé com o total do dia, como a faixa de horas do ClickUp
+  const rodape = '<tr class="gc-rodape"><th class="gc-nome">Total do dia</th>' +
+    dias.map(d => {
+      const t = linhas.reduce((s, p) => s + ((p.porDia && p.porDia.get(d)) || 0), 0);
+      return '<td class="gc-cel num">' + (t ? fmtHoras(t) : '—') + '</td>';
+    }).join('') +
+    '<td class="gc-tot num">' + fmtHoras(linhas.reduce((s, p) =>
+      s + dias.reduce((x, d) => x + ((p.porDia && p.porDia.get(d)) || 0), 0), 0)) + '</td></tr>';
+
+  const legenda = '<div class="gc-legenda">' +
+    '<span><i class="gc-bloco sem"></i>nada lançado</span>' +
+    '<span><i class="gc-bloco baixa"></i>menos de 6h</span>' +
+    '<span><i class="gc-bloco cheia"></i>6h a 9h</span>' +
+    '<span><i class="gc-bloco acima"></i>mais de 9h</span>' +
+    '</div>';
+
+  const corte = (uteis.length > dias.length)
+    ? ' · mostrando os últimos <b>' + dias.length + '</b> de ' + fmtN(uteis.length) +
+      ' dias úteis do período'
+    : '';
+  const cortePessoas = (pessoas.length > linhas.length)
+    ? ' · <b>' + linhas.length + '</b> de ' + fmtN(pessoas.length) +
+      ' pessoas, as com mais dias descobertos'
+    : '';
+
+  return '<div class="gc-rolagem"><table class="gc">' +
+         '<thead>' + cab + '</thead><tbody>' + corpo + rodape + '</tbody></table></div>' +
+         legenda +
+         '<p class="gc-nota">Jornada de referência: ' + JORNADA + 'h' + corte + cortePessoas +
+         '<br>Buraco solto no meio da semana costuma ser esquecimento; ' +
+         'faixa contínua costuma ser férias ou afastamento não registrado.</p>';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   QUADRO POR SITUAÇÃO — do quadro do Jira
+   ═══════════════════════════════════════════════════════════════
+   Quatro colunas com contagem no topo, um cartão por pessoa.
+
+   A tabela ordenada por "dias parado" é uma rampa contínua: para
+   saber quantos estão em cada situação é preciso contar linha a
+   linha. A coluna já traz o número no cabeçalho, e o tamanho da
+   pilha mostra a proporção sem ler número nenhum. */
+function quadroSituacao(pessoas) {
+  if (!pessoas.length) return '';
+
+  const colunas = [
+    { rot: 'Em dia',        cls: 'ok',    teste: p => p.atraso === 0 },
+    { rot: '1 a 2 dias',    cls: 'warn',  teste: p => p.atraso >= 1 && p.atraso <= 2 },
+    { rot: '3 dias ou mais', cls: 'bad',  teste: p => p.atraso >= 3 },
+    { rot: 'Nunca lançaram', cls: 'nunca', teste: p => p.atraso === null },
+  ];
+
+  return '<div class="quadro">' + colunas.map(c => {
+    const gente = pessoas.filter(c.teste)
+      .sort((a, b) => (b.atraso || 0) - (a.atraso || 0) ||
+                      a.chave.localeCompare(b.chave, 'pt-BR'));
+    const cartoes = gente.length
+      ? gente.map(p => '<article class="qd-cartao ' + c.cls + '">' +
+          '<div class="qd-nome">' + esc(p.chave) + '</div>' +
+          chipSetor(p.setor) +
+          '<div class="qd-pe">' +
+            (p.ultimo
+              ? '<span class="qd-data">' + fmtData(p.ultimo) + '</span>'
+              : '<span class="qd-data">sem registro</span>') +
+            (p.atraso ? '<span class="qd-dias">' + p.atraso + 'd</span>' : '') +
+          '</div></article>').join('')
+      : '<div class="qd-vazio">ninguém aqui</div>';
+    return '<section class="qd-coluna"><header class="qd-topo ' + c.cls + '">' +
+           '<span>' + c.rot + '</span><span class="qd-conta">' + gente.length + '</span>' +
+           '</header><div class="qd-pilha">' + cartoes + '</div></section>';
+  }).join('') + '</div>';
+}
+
+/* ── ETIQUETA DE SETOR ───────────────────────────────────────────
+   Inspirada nas etiquetas coloridas do quadro do Jira (ACCOUNTS,
+   BILLING, FORMS): numa coluna de texto cinza, o olho tem que ler
+   cada linha para agrupar; com cor, os blocos aparecem sozinhos.
+
+   A cor sai do nome, não de uma lista fixa: setor novo no cadastro
+   já nasce com cor, e a cor de um setor nunca muda entre telas nem
+   entre máquinas, porque não há sorteio nem contador — é sempre a
+   mesma conta sobre as mesmas letras.
+
+   Doze matizes espaçados de 30°, saturação e luminosidade vindas do
+   tema. O texto usa a mesma matiz num tom legível, e o fundo é a
+   mesma matiz bem diluída: a etiqueta tem cor sem virar bandeira. */
+function corDeTexto(txt) {
+  let h = 0;
+  const s = String(txt || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return (h % 12) * 30;
+}
+
+function chipSetor(v) {
+  if (!v || v === '—') return '<span class="muted">—</span>';
+  return '<span class="chip-setor" style="--h:' + corDeTexto(v) + '">' +
+         esc(v) + '</span>';
+}
+
+/* ── BARRA DE CAPACIDADE ─────────────────────────────────────────
+   Inspirada na visão Workload do ClickUp, onde a barra muda de cor
+   ao passar da capacidade. Aqui o sentido é o inverso — cobertura
+   alta é bom —, então o verde fica em cima:
+
+     >= 90%  em dia        verde
+     60-89%  faltando dia  âmbar
+      < 60%  descoberto    vermelho
+
+   O número sozinho obriga a comparar 87% com 58% de cabeça, linha a
+   linha. A barra responde antes da leitura. */
+function barraCapacidade(v) {
+  const p = Math.max(0, Math.min(1, Number(v) || 0));
+  const estado = p >= 0.9 ? 'ok' : p >= 0.6 ? 'warn' : 'bad';
+  return '<span class="cap ' + estado + '">' +
+         '<span class="cap-trilho"><span class="cap-fita" style="width:' +
+         (p * 100).toFixed(1) + '%"></span></span>' +
+         '<span class="cap-num">' + fmtPct(p) + '</span></span>';
 }
 
 /* Tabela ordenável.
@@ -1221,7 +1454,10 @@ function mioloTabela(id, colunas, dados, porPagina, ordemPadrao, clicavel) {
   const max = {};
   colunas.forEach(c => { if (c.barra) max[c.campo] = Math.max(...dados.map(d => d[c.campo] || 0), 0); });
 
-  const alinhaEsq = (t) => t === 'texto' || t === 'data' || t === 'tag' || t === 'livre';
+  // 'setor' e 'capacidade' desenham um bloco próprio (etiqueta, barra):
+  // alinhados à direita ficariam soltos da coluna vizinha
+  const alinhaEsq = (t) => t === 'texto' || t === 'data' || t === 'tag' ||
+                           t === 'livre' || t === 'setor' || t === 'capacidade';
   const cab = colunas.map(c =>
     '<th class="' + (alinhaEsq(c.tipo) ? '' : 'num') + '" data-tab="' + id + '" data-campo="' + c.campo + '">' +
     c.rot + (ord.campo === c.campo ? (ord.desc ? ' ▾' : ' ▴') : '') + '</th>').join('');
@@ -1238,6 +1474,8 @@ function mioloTabela(id, colunas, dados, porPagina, ordemPadrao, clicavel) {
     else if (c.tipo === 'brl')   txt = fmtBRL(v);
     else if (c.tipo === 'brl2')  txt = fmtBRL2(v);
     else if (c.tipo === 'tag')   txt = tagTipo(v);
+    else if (c.tipo === 'setor') txt = chipSetor(v);
+    else if (c.tipo === 'capacidade') txt = barraCapacidade(v);
     else                         txt = esc(v);
     let cel = txt;
     if (c.barra && max[c.campo] > 0) {
@@ -1653,9 +1891,8 @@ function telaAgrupada(linhas, rotulo, chaveFn, idTab, soProjetos) {
 
     html += secao('Obras',
       box(tabela(idTab, colsObra, dados, 20, { campo: 'horas', desc: true }, true)),
-      fmtN(dados.length) + ' obras no filtro atual ' +
-      '<button id="btn-excel-obras" class="exportar" style="margin-left:10px">' +
-      '⤓ Excel das obras</button>');
+      fmtN(dados.length) + ' obras no filtro atual',
+      '<button id="btn-excel-obras" class="exportar">⤓ Excel das obras</button>');
 
     if (S.modoSistema) {
       html += '<div class="box" style="border-color:rgba(210,150,63,.38);margin:-18px 0 22px">' +
@@ -2553,9 +2790,16 @@ function telaResultado(linhas) {
 
   /* ── 4. mês a mês ──────────────────────────────────────────────
      Mostra se o prejuízo é constante ou foi um mês fora da curva. */
+  // uma passada só para separar as linhas por mês; antes cada mês
+  // varria a lista inteira de novo
+  const linhasDoMes = new Map();
+  for (const r of linhas) {
+    let v = linhasDoMes.get(r._mes);
+    if (!v) linhasDoMes.set(r._mes, v = []);
+    v.push(r);
+  }
   const meses = agrupar(linhas, r => r._mes).map(m => {
-    const rs = linhas.filter(r => r._mes === m.chave);
-    const km = resumir(rs);
+    const km = resumir(linhasDoMes.get(m.chave) || []);
     return {
       chave: rotuloMes(m.chave),
       _ord: m.chave,
@@ -2643,9 +2887,12 @@ function telaCobertura(linhas) {
   const porPessoa = new Map();
   for (const r of base) {
     if (!porPessoa.has(r.colaborador))
-      porPessoa.set(r.colaborador, { dias: new Set(), horas: 0, ultimo: '', setor: r.setor });
+      porPessoa.set(r.colaborador, { dias: new Set(), horas: 0, ultimo: '', setor: r.setor,
+                                     porDia: new Map() });
     const p = porPessoa.get(r.colaborador);
     p.dias.add(r.data); p.horas += r.horas;
+    // horas por dia: é o que alimenta a grade de carga
+    p.porDia.set(r.data, (p.porDia.get(r.data) || 0) + r.horas);
     if (r.data > p.ultimo) p.ultimo = r.data;
     if (r.setor) p.setor = r.setor;
   }
@@ -2701,6 +2948,7 @@ function telaCobertura(linhas) {
       faltam: faltando.length,
       cobertura: uteis.length ? lancados / uteis.length : 0,
       horas: p ? p.horas : 0,
+      porDia: p ? p.porDia : null,
       diasFaltando: faltando,
       cadastro: situacao(nome) === 'sem-cadastro' ? 'sem cadastro' : '',
     };
@@ -2759,6 +3007,38 @@ function telaCobertura(linhas) {
         'lançou antes de trabalhar', pontual.futuros.length ? 'bad' : 'ok') : '') +
     '</div>';
 
+  /* ── barra da aba ────────────────────────────────────────────────
+     O recorte por setor é a primeira pergunta que se faz aqui ("quem
+     da DRENAGEM está parado?"), e estava escondido atrás do botão
+     Filtros lá em cima. O select abaixo é o MESMO #f-setor — não é um
+     segundo filtro, é um atalho para ele, senão os dois divergiriam.
+     Ao lado, o download do relatório desta tela. */
+  const setores = [...new Set([
+    ...S.perfis.map(p => p.setor),
+    ...S.linhas.map(r => r.setor),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  html += '<div class="barra-aba">' +
+    '<div class="barra-aba-campos">' +
+      '<label class="campo-rot" for="cob-setor">Setor</label>' +
+      '<select id="cob-setor" class="fil-aba">' +
+        '<option value="">todos os setores</option>' +
+        setores.map(s => '<option value="' + esc(s) + '"' +
+          (S.filtros.setor === s ? ' selected' : '') + '>' + esc(s) + '</option>').join('') +
+      '</select>' +
+      (S.filtros.setor
+        ? '<span class="aba-recorte">mostrando <b>' + esc(S.filtros.setor) + '</b> · ' +
+          fmtN(pessoas.length) + ' pessoas</span>'
+        : '<span class="aba-recorte">' + fmtN(pessoas.length) + ' pessoas no quadro ativo</span>') +
+    '</div>' +
+    '<button id="btn-excel-cobertura" class="exportar" ' +
+      'title="Baixa esta tela inteira em Excel, uma aba por lista">' +
+      '⤓ Baixar relatório</button>' +
+    '</div>';
+
+  // o Excel sai exatamente com o que está na tela, recorte inclusive
+  S.cobNaTela = { pessoas, nunca, comAtraso: null, inativos, uteis, de, ate, hoje };
+
   html += nota(
     fmtData(de) + ' a ' + fmtData(ate) + ' · <b>' + uteis.length + '</b> dias úteis',
     'Dias úteis são de segunda a sexta. Feriados não são descontados, então ' +
@@ -2767,21 +3047,35 @@ function telaCobertura(linhas) {
     'pessoas fica mais abaixo.' +
     (S.filtros.colab ? '<br>O filtro de colaborador não vale nesta tela: ela existe justamente para mostrar quem está faltando.' : ''));
 
+  /* As duas visões vêm ANTES das tabelas: respondem "como está o
+     quadro" de relance, e a tabela responde "quem exatamente". Quem
+     só quer o panorama para na primeira tela. */
+  html += secao('Situação de cada um',
+    quadroSituacao(pessoas),
+    'quatro situações, uma coluna cada — o tamanho da pilha mostra a proporção');
+
+  const grade = gradeCarga(pessoas, uteis);
+  if (grade) {
+    html += secao('Carga por dia', grade,
+      'quem lançou o quê, em que dia — a cor é a carga do dia');
+  }
+
   if (nunca.length) {
     html += secao('Nunca lançaram nada',
       box(tabela('cob-nunca', [
         { rot: 'Colaborador', campo: 'chave',    tipo: 'texto' },
-        { rot: 'Setor',       campo: 'setor',    tipo: 'texto' },
+        { rot: 'Setor',       campo: 'setor',    tipo: 'setor' },
         { rot: 'Cadastro',    campo: 'cadastro', tipo: 'texto' },
       ], nunca, 15, { campo: 'chave', desc: false })),
       'estão cadastrados mas nunca usaram o sistema');
   }
 
   const comAtraso = pessoas.filter(p => p.atraso !== null && p.atraso > 0);
+  S.cobNaTela.comAtraso = comAtraso;
   html += secao('Quem está sem lançar',
     box(tabela('cob-atraso', [
       { rot: 'Colaborador',        campo: 'chave',  tipo: 'texto' },
-      { rot: 'Setor',              campo: 'setor',  tipo: 'texto' },
+      { rot: 'Setor',              campo: 'setor',  tipo: 'setor' },
       { rot: 'Último lançamento',  campo: 'ultimo', tipo: 'data'  },
       { rot: 'Dias úteis parado',  campo: 'atraso', tipo: 'num', barra: true },
       { rot: 'Horas no período',   campo: 'horas',  tipo: 'horas' },
@@ -2791,10 +3085,10 @@ function telaCobertura(linhas) {
   html += secao('Cobertura do período',
     box(tabela('cob-geral', [
       { rot: 'Colaborador',     campo: 'chave',     tipo: 'texto' },
-      { rot: 'Setor',           campo: 'setor',     tipo: 'texto' },
+      { rot: 'Setor',           campo: 'setor',     tipo: 'setor' },
       { rot: 'Dias lançados',   campo: 'lancados',  tipo: 'num'   },
       { rot: 'Dias a conferir', campo: 'faltam',    tipo: 'num', barra: true },
-      { rot: '% coberto',       campo: 'cobertura', tipo: 'pct'   },
+      { rot: '% coberto',       campo: 'cobertura', tipo: 'capacidade' },
       { rot: 'Horas',           campo: 'horas',     tipo: 'horas' },
     ], pessoas, 20, { campo: 'faltam', desc: true })),
     'de ' + uteis.length + ' dias úteis no período · ' + fmtN(pessoas.length) + ' pessoas');
@@ -2804,7 +3098,7 @@ function telaCobertura(linhas) {
     html += secao('Colaboradores inativos',
       box(tabela('cob-inativos', [
         { rot: 'Colaborador',        campo: 'chave',  tipo: 'texto' },
-        { rot: 'Setor',              campo: 'setor',  tipo: 'texto' },
+        { rot: 'Setor',              campo: 'setor',  tipo: 'setor' },
         { rot: 'Último lançamento',  campo: 'ultimo', tipo: 'data'  },
         { rot: 'Horas no histórico', campo: 'horas',  tipo: 'horas' },
       ], inativos, 15, { campo: 'ultimo', desc: true })),
@@ -2828,6 +3122,7 @@ function telaCobertura(linhas) {
       status: o ? (o.status || 'EM ANDAMENTO') : '— não cadastrada —',
     };
   }).filter(o => o.atraso >= 5);
+  S.cobNaTela.obras = obras;
 
   html += secao('Obras sem movimento',
     box(tabela('cob-obras', [
@@ -2890,11 +3185,22 @@ function telaCobertura(linhas) {
     // ranking de quem lança com mais atraso — só gente ativa
     const atrasadosAtivos = comCarimbo.filter(r => r._atraso > 7 && nomes.has(r.colaborador));
     const porColab = agrupar(atrasadosAtivos, r => r.colaborador);
+    /* Antes, cada pessoa varria `comCarimbo` inteiro à procura das suas
+       próprias linhas: 100 pessoas × 12 mil linhas = 1,2 milhão de
+       comparações só para montar esta tabela. Uma passada só, guardando
+       total e pior atraso por pessoa, resolve o mesmo. */
+    const porNome = new Map();
+    for (const r of comCarimbo) {
+      let v = porNome.get(r.colaborador);
+      if (!v) porNome.set(r.colaborador, v = { total: 0, pior: 0 });
+      v.total++;
+      if ((r._atraso || 0) > v.pior) v.pior = r._atraso || 0;
+    }
     porColab.forEach(c => {
-      const rs = comCarimbo.filter(r => r.colaborador === c.chave);
-      c.total = rs.length;
-      c.pctAtraso = rs.length ? c.n / rs.length : 0;
-      c.pior = rs.length ? Math.max(...rs.map(r => r._atraso || 0)) : 0;
+      const v = porNome.get(c.chave) || { total: 0, pior: 0 };
+      c.total     = v.total;
+      c.pctAtraso = v.total ? c.n / v.total : 0;
+      c.pior      = v.pior;
     });
     if (porColab.length) {
       html += secao('Quem lança com mais atraso',
@@ -3297,29 +3603,155 @@ function render() {
    Duas abas: as obras com hora lançada e as cadastradas que estão paradas.
    Sem a segunda, uma obra que ninguém tocou some da análise justamente
    quando ela é o caso mais interessante. */
+/* ── peças comuns das exportações ────────────────────────────────
+   Estavam declaradas dentro de exportarObrasExcel(). Subiram para cá
+   quando a Cobertura ganhou download próprio: duas cópias das mesmas
+   regras de formato acabariam divergindo na primeira correção. */
+const FMT_HORA = '[h]:mm';
+const FMT_BRL  = 'R$ #,##0';
+const FMT_PCT  = '0.0%';
+/* o Excel guarda hora como fração de dia; o formato [h]:mm passa de
+   24h sem virar "1 dia e 3 horas" */
+const emHoras  = (h) => (Number(h) || 0) / 24;
+
+const col = (n) => {
+  let t = '';
+  for (n = n + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+    t = String.fromCharCode(65 + (n - 1) % 26) + t;
+  }
+  return t;
+};
+const formatar = (aba, indice, de, ate, z) => {
+  const letra = col(indice);
+  for (let i = de; i <= ate; i++) {
+    const c = aba[letra + i];
+    if (c && typeof c.v === 'number') { c.t = 'n'; c.z = z; }
+  }
+};
+
+/* Monta a planilha a partir de cabeçalho + linhas, já com filtro no
+   topo, primeira linha congelada e larguras de coluna. Toda aba de
+   todo relatório passa por aqui, então o comportamento é o mesmo em
+   todos: dá para filtrar por setor dentro do próprio Excel. */
+function montarAba(cab, linhas, opcoes) {
+  const o   = opcoes || {};
+  const aoa = [cab].concat(linhas);
+  const aba = XLSX.utils.aoa_to_sheet(aoa);
+  const ultima = aoa.length;
+  (o.formatos || []).forEach(f => formatar(aba, f.col, 2, ultima, f.z));
+  aba['!cols'] = cab.map((c, i) =>
+    ({ wch: (o.larguras && o.larguras[i]) || Math.max(12, String(c).length + 2) }));
+  aba['!autofilter'] = { ref: 'A1:' + col(cab.length - 1) + ultima };
+  aba['!freeze'] = { xSplit: 0, ySplit: 1 };
+  return aba;
+}
+
+/* ── RELATÓRIO DE COBERTURA ──────────────────────────────────────
+   Quem não está lançando hora. Sai com o mesmo recorte da tela — se o
+   setor está filtrado, o arquivo já vem só com aquele setor, e o nome
+   do arquivo diz qual.
+
+   Cinco abas em vez de uma só porque são cinco perguntas diferentes, e
+   amontoar tudo numa aba obrigaria a filtrar para ler qualquer uma
+   delas. Todas saem com filtro no cabeçalho e primeira linha
+   congelada: dá para recortar por setor dentro do Excel também. */
+function exportarCoberturaExcel() {
+  const d = S.cobNaTela;
+  if (!d) { alert('Abra a aba Cobertura antes de baixar o relatório.'); return; }
+
+  const wb = XLSX.utils.book_new();
+  const periodo = fmtData(d.de) + ' a ' + fmtData(d.ate);
+  const recorte = S.filtros.setor || '';
+
+  // ── 1. a pergunta principal: quem está sem lançar ──
+  const cabAtraso = ['Colaborador', 'Setor', 'Último lançamento',
+                     'Dias úteis parado', 'Horas no período', 'Observação'];
+  const linAtraso = ordenarPor(d.comAtraso || [], 'atraso', true).map(p => [
+    p.chave, p.setor, p.ultimo ? fmtData(p.ultimo) : '',
+    p.atraso, emHoras(p.horas), p.cadastro || '',
+  ]);
+  XLSX.utils.book_append_sheet(wb,
+    montarAba(cabAtraso, linAtraso, {
+      formatos: [{ col: 4, z: FMT_HORA }],
+      larguras: [30, 18, 18, 18, 17, 16],
+    }), 'Sem lancar');
+
+  // ── 2. quem nunca usou o sistema ──
+  const linNunca = ordenarPor(d.nunca || [], 'chave', false)
+    .map(p => [p.chave, p.setor, p.cadastro || 'cadastrado']);
+  if (linNunca.length) {
+    XLSX.utils.book_append_sheet(wb,
+      montarAba(['Colaborador', 'Setor', 'Cadastro'], linNunca,
+                { larguras: [30, 18, 16] }), 'Nunca lancaram');
+  }
+
+  // ── 3. o quadro inteiro, com a cobertura de cada um ──
+  const cabGeral = ['Colaborador', 'Setor', 'Dias lançados', 'Dias a conferir',
+                    '% coberto', 'Horas no período', 'Último lançamento',
+                    'Dias úteis parado'];
+  const linGeral = ordenarPor(d.pessoas || [], 'faltam', true).map(p => [
+    p.chave, p.setor, p.lancados, p.faltam, p.cobertura, emHoras(p.horas),
+    p.ultimo ? fmtData(p.ultimo) : '', p.atraso == null ? 'nunca lançou' : p.atraso,
+  ]);
+  XLSX.utils.book_append_sheet(wb,
+    montarAba(cabGeral, linGeral, {
+      formatos: [{ col: 4, z: FMT_PCT }, { col: 5, z: FMT_HORA }],
+      larguras: [30, 18, 15, 16, 12, 17, 18, 18],
+    }), 'Cobertura do periodo');
+
+  // ── 4. inativos: fora da cobrança, mas o controle é de todo mundo ──
+  if ((d.inativos || []).length) {
+    const linInat = ordenarPor(d.inativos, 'ultimo', true).map(p => [
+      p.chave, p.setor, p.ultimo ? fmtData(p.ultimo) : '', emHoras(p.horas),
+    ]);
+    XLSX.utils.book_append_sheet(wb,
+      montarAba(['Colaborador', 'Setor', 'Último lançamento', 'Horas no histórico'],
+                linInat, { formatos: [{ col: 3, z: FMT_HORA }],
+                           larguras: [30, 18, 18, 19] }), 'Inativos');
+  }
+
+  // ── 5. obras paradas ──
+  if ((d.obras || []).length) {
+    const linObras = ordenarPor(d.obras, 'atraso', true).map(o => [
+      o.chave, o.status, o.ultimo ? fmtData(o.ultimo) : '', o.atraso,
+    ]);
+    XLSX.utils.book_append_sheet(wb,
+      montarAba(['Obra', 'Status no cadastro', 'Último lançamento', 'Dias úteis parada'],
+                linObras, { larguras: [40, 22, 18, 18] }), 'Obras sem movimento');
+  }
+
+  // ── capa: o que este arquivo é, e de quando ──
+  const capa = [
+    ['Relatório de cobertura — Painel de Produtividade Viavoz'],
+    [],
+    ['Período', periodo],
+    ['Dias úteis no período', (d.uteis || []).length],
+    ['Recorte de setor', recorte || 'todos os setores'],
+    ['Gerado em', fmtData(isoDe(new Date())) + ' ' +
+                  new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })],
+    [],
+    ['Sem lancar', (d.comAtraso || []).length + ' pessoas com 1 dia útil ou mais sem lançar'],
+    ['Nunca lancaram', (d.nunca || []).length + ' pessoas sem nenhum registro'],
+    ['Cobertura do periodo', (d.pessoas || []).length + ' pessoas no quadro ativo'],
+    ['Inativos', (d.inativos || []).length + ' fora da cobrança'],
+    ['Obras sem movimento', (d.obras || []).length + ' paradas há 5 dias úteis ou mais'],
+    [],
+    ['Dias úteis são de segunda a sexta. Feriados não são descontados, então um feriado'],
+    ['aparece como dia sem lançamento. Líderes e inativos não entram na cobrança.'],
+  ];
+  const abaCapa = XLSX.utils.aoa_to_sheet(capa);
+  abaCapa['!cols'] = [{ wch: 26 }, { wch: 58 }];
+  XLSX.utils.book_append_sheet(wb, abaCapa, 'Leia-me');
+
+  const sufixo = recorte ? '_' + recorte.replace(/[^\w]+/g, '-').toLowerCase() : '';
+  XLSX.writeFile(wb, 'cobertura' + sufixo + '_' + isoDe(new Date()) + '.xlsx');
+}
+
+
 function exportarObrasExcel() {
   const dados = S.obrasNaTela || [];
   if (!dados.length) { alert('Nenhuma obra no filtro atual.'); return; }
 
-  const FMT_HORA = '[h]:mm';
-  const FMT_BRL  = 'R$ #,##0';
-  const FMT_PCT  = '0.0%';
-  const emHoras  = (h) => (Number(h) || 0) / 24;
-
-  const col = (n) => {
-    let t = '';
-    for (n = n + 1; n > 0; n = Math.floor((n - 1) / 26)) {
-      t = String.fromCharCode(65 + (n - 1) % 26) + t;
-    }
-    return t;
-  };
-  const formatar = (aba, indice, de, ate, z) => {
-    const letra = col(indice);
-    for (let i = de; i <= ate; i++) {
-      const c = aba[letra + i];
-      if (c && typeof c.v === 'number') { c.t = 'n'; c.z = z; }
-    }
-  };
 
   // último lançamento de cada obra, mesmo fora do filtro de data
   const ultimo = new Map();
@@ -3401,29 +3833,11 @@ function exportarExcel() {
   const linhas = filtrar();
   if (!linhas.length) { alert('Nada para exportar no filtro atual.'); return; }
 
-  // Formato de hora IGUAL ao da exportação do Registro de Horas.
-  // No Excel, duração é fração de dia (8h = 8/24) e o formato é '[h]:mm'.
-  // Os colchetes em [h] impedem que a soma zere a cada 24h: sem eles,
+  // FMT_HORA, emHoras, col e formatar sao comuns as tres exportacoes e
+  // vivem no topo da secao. O formato [h]:mm e o mesmo do Registro de
+  // Horas: os colchetes impedem que a soma zere a cada 24h — sem eles,
   // 4940 horas apareceriam como 20:52 em vez de 4940:52.
-  const FMT_HORA = '[h]:mm';
-  const emHoras = (h) => (Number(h) || 0) / 24;
-
-  const col = (n) => {           // 0 -> 'A', 25 -> 'Z', 26 -> 'AA'
-    let s = '';
-    for (n = n + 1; n > 0; n = Math.floor((n - 1) / 26)) {
-      s = String.fromCharCode(65 + (n - 1) % 26) + s;
-    }
-    return s;
-  };
-
-  // aplica o formato de duração numa coluna inteira da aba
-  const formatarHoras = (aba, indiceColuna, primeiraLinha, ultimaLinha) => {
-    const letra = col(indiceColuna);
-    for (let i = primeiraLinha; i <= ultimaLinha; i++) {
-      const c = aba[letra + i];
-      if (c && typeof c.v === 'number') { c.t = 'n'; c.z = FMT_HORA; }
-    }
-  };
+  const formatarHoras = (aba, c, de, ate) => formatar(aba, c, de, ate, FMT_HORA);
 
   const wb = XLSX.utils.book_new();
 
@@ -3605,7 +4019,60 @@ function ligarAtualizacaoAutomatica() {
 /* ───────────────────────────────────────────────────────────────
    13. EVENTOS E INÍCIO
    ─────────────────────────────────────────────────────────────── */
+/* ── SPOTLIGHT ───────────────────────────────────────────────────
+   Técnica do "Spotlight Card" de @jahed (21st.dev), portada para JS
+   puro — lá é React + Tailwind, aqui não há build.
+
+   Um único listener em #conteudo, não um por cartão: a tela chega a
+   ter trinta cartões, e trinta listeners sobreviveriam ao render
+   seguinte como lixo. Delegar também significa que cartão novo já
+   nasce funcionando, sem religar nada.
+
+   O custo é duas custom properties por quadro, no máximo — nada de
+   layout, nada de pintura fora do próprio cartão. getBoundingClientRect
+   só é chamado quando o ponteiro troca de cartão. */
+function ligarSpotlight() {
+  const alvo = $('#conteudo');
+  if (!alvo || !window.matchMedia('(hover: hover)').matches) return;
+
+  let atual = null, caixa = null, ev = null, agendado = false;
+
+  const pintar = () => {
+    agendado = false;
+    if (!atual || !caixa || !ev) return;
+    atual.style.setProperty('--mx', (ev.clientX - caixa.left) + 'px');
+    atual.style.setProperty('--my', (ev.clientY - caixa.top)  + 'px');
+  };
+
+  const apagar = () => {
+    if (!atual) return;
+    atual.style.setProperty('--luz', '0');
+    atual = caixa = null;
+  };
+
+  alvo.addEventListener('pointermove', (e) => {
+    const cartao = e.target.closest('.kpi, .secao');
+    if (cartao !== atual) {
+      apagar();
+      atual = cartao;
+      if (!atual) return;
+      // só aqui mede: trocar de cartão é raro, mover dentro dele não
+      caixa = atual.getBoundingClientRect();
+      atual.style.setProperty('--luz', '1');
+    }
+    if (!atual) return;
+    ev = e;
+    // um repinte por quadro, não um por evento de ponteiro
+    if (!agendado) { agendado = true; requestAnimationFrame(pintar); }
+  }, { passive: true });
+
+  alvo.addEventListener('pointerleave', apagar, { passive: true });
+  // rolar muda a posição do cartão na tela e invalida a medida
+  window.addEventListener('scroll', apagar, { passive: true, capture: true });
+}
+
 function ligarEventos() {
+  ligarSpotlight();
   $('#btn-tema').addEventListener('click', () => TEMA.alternar());
   $('#form-login').addEventListener('submit', entrar);
   $('#btn-sair').addEventListener('click', sair);
@@ -3689,11 +4156,22 @@ function ligarEventos() {
       CUSTOS.importar(arq.files[0], render);
       arq.value = '';
     }
+
+    /* O select de setor da aba Cobertura escreve no #f-setor de cima:
+       é atalho para o mesmo filtro, não um segundo. Se fosse separado,
+       a barra de filtros diria "nenhum" com a tela recortada. */
+    const cs = e.target.closest('#cob-setor');
+    if (cs) {
+      $('#f-setor').value = cs.value;
+      atualizarContaFiltros();
+      render();
+    }
   });
 
   $('#conteudo').addEventListener('click', (e) => {
     if (e.target.closest('#btn-conferir'))     { rodarConferencia(); return; }
     if (e.target.closest('#btn-excel-obras'))  { exportarObrasExcel(); return; }
+    if (e.target.closest('#btn-excel-cobertura')) { exportarCoberturaExcel(); return; }
 
     // ── aumento com data ──
     const abrir = e.target.closest('[data-abrir-aumento]');
