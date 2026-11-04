@@ -106,6 +106,7 @@ const S = {
   linhas: [], atualizadoEm: null,
   aba: null, ordem: {}, pagina: {}, graficos: [],
   tabelas: {},           // argumentos de cada tabela, para refazer só ela
+  kpisNaTela: [],        // indicadores da tela atual, para o Excel
   atalhoPeriodo: '', diaDoAtalho: '',   // para recalcular quando o dia virar
   timerAtualizar: null, ocultoDesde: 0,
   canalRealtime: null, aoVivo: false, ultimoEventoEm: null, debounceRealtime: null,
@@ -1084,6 +1085,14 @@ function ordenarPor(arr, campo, desc) {
    antigas continuam valendo. */
 function kpi(rot, val, sub, cor, extras) {
   const e = extras || {};
+  /* Guarda o indicador para o Excel. A alternativa seria recalcular
+     tudo no exportador — duas contas para o mesmo número, que um dia
+     discordariam. Aqui o que vai para a planilha é literalmente o que
+     foi desenhado na tela. */
+  S.kpisNaTela.push({ rot: String(rot).replace(/<[^>]*>/g, ''),
+                      val: String(val).replace(/<[^>]*>/g, ''),
+                      sub: String(sub || '').replace(/<[^>]*>/g, ''),
+                      cor: cor || '' });
   let anel = '';
   if (typeof e.anel === 'number' && isFinite(e.anel)) {
     const p = Math.max(0, Math.min(1, e.anel));
@@ -3537,6 +3546,7 @@ function render() {
   lerFiltros();
   limparGraficos();
   S.tabelas = {};   // o registro vale só para a tela que está no ar
+  S.kpisNaTela = [];
   const linhas = filtrar();
 
   $('#contador').textContent = fmtN(linhas.length) + ' de ' + fmtN(S.linhas.length) + ' registros';
@@ -3591,6 +3601,28 @@ function render() {
     default:              html = telaResumo(linhas);
   }
   $('#conteudo').innerHTML = html;
+  atualizarBotaoExcel();
+}
+
+/* O botão tem que dizer o que vai baixar. "Excel" sozinho, numa tela
+   que exporta coisas diferentes conforme a aba, é uma caixa-preta:
+   a pessoa clica sem saber se vem a aba ou o arquivo inteiro. */
+function atualizarBotaoExcel() {
+  const b = $('#btn-excel');
+  if (!b) return;
+  const rot  = b.querySelector('.rotulo-botao');
+  const nome = (ABAS_PAINEL.find(a => a[0] === S.aba) || [, ''])[1];
+  if (S.aba === 'resumo') {
+    if (rot) rot.textContent = 'Excel completo';
+    b.title = 'Baixa o painel inteiro: uma aba de planilha por tela, com resumo na frente';
+  } else if (S.aba === 'registros') {
+    if (rot) rot.textContent = 'Excel';
+    b.title = 'Baixa os lançamentos do filtro atual, nas mesmas colunas do Registro de Horas';
+  } else {
+    if (rot) rot.textContent = 'Excel desta aba';
+    b.title = 'Baixa só o que está em ' + (nome || 'nesta aba') +
+              '. Para o arquivo inteiro, use a Visão Geral.';
+  }
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -3629,22 +3661,290 @@ const formatar = (aba, indice, de, ate, z) => {
   }
 };
 
-/* Monta a planilha a partir de cabeçalho + linhas, já com filtro no
-   topo, primeira linha congelada e larguras de coluna. Toda aba de
-   todo relatório passa por aqui, então o comportamento é o mesmo em
-   todos: dá para filtrar por setor dentro do próprio Excel. */
+/* ═══════════════════════════════════════════════════════════════
+   SISTEMA VISUAL DAS PLANILHAS
+   ═══════════════════════════════════════════════════════════════
+   Mesma paleta da planilha de licenças Autodesk da empresa, para os
+   arquivos daqui chegarem na mesma cara do que já circula lá.
+
+   Precisa do xlsx-js-style (ver nota no index.html): a build
+   comunitária do SheetJS aceita `cell.s` e joga fora na gravação. */
+const EX = {
+  TINTA:    '0F172A',   // faixa de titulo (slate-900)
+  GRUPO: {  // bandas que agrupam colunas
+    azul:  '1E3A8A', ambar: 'B45309', verde: '047857',
+    roxo:  '5B21B6', cinza: '334155',
+  },
+  CAB:      'EAF0F8',   // fundo do cabecalho de coluna
+  CAB_TXT:  '1E293B',
+  ZEBRA:    'F8FAFC',
+  BRANCO:   'FFFFFF',
+  TXT:      '0F172A',   // texto forte
+  TXT2:     '334155',   // texto normal
+  TXT3:     '94A3B8',   // texto apagado
+  LINHA:    'E2E8F0',   // borda
+  OK:       '16A34A', ALERTA: 'D97706', RUIM: 'DC2626', INFO: '2563EB',
+  OK_BG:    'DCFCE7', ALERTA_BG: 'FEF3C7', RUIM_BG: 'FEE2E2', INFO_BG: 'DBEAFE',
+};
+
+const borda = (cor) => ({ style: 'thin', color: { rgb: cor || EX.LINHA } });
+
+/* faixa de titulo que ocupa a largura da aba */
+function exTitulo(aba, texto, sub, nCols) {
+  aba['A1'] = { t: 's', v: texto, s: {
+    font: { bold: true, sz: 14, color: { rgb: EX.BRANCO } },
+    fill: { patternType: 'solid', fgColor: { rgb: EX.TINTA } },
+    alignment: { vertical: 'center', horizontal: 'left', indent: 1 },
+  } };
+  aba['A2'] = { t: 's', v: sub || '', s: {
+    font: { sz: 9, color: { rgb: EX.TXT3 } },
+    fill: { patternType: 'solid', fgColor: { rgb: EX.CAB } },
+    alignment: { vertical: 'center', horizontal: 'left', indent: 1 },
+  } };
+  // as celulas vizinhas precisam do mesmo fundo, senao a faixa
+  // termina na coluna A e o resto fica branco
+  for (let i = 1; i < nCols; i++) {
+    aba[col(i) + '1'] = { t: 's', v: '', s: aba['A1'].s };
+    aba[col(i) + '2'] = { t: 's', v: '', s: aba['A2'].s };
+  }
+  aba['!merges'] = (aba['!merges'] || []).concat([
+    { s: { r: 0, c: 0 }, e: { r: 0, c: nCols - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: nCols - 1 } },
+  ]);
+  aba['!rows'] = (aba['!rows'] || []);
+  aba['!rows'][0] = { hpt: 26 };
+  aba['!rows'][1] = { hpt: 16 };
+}
+
+/* Monta a planilha a partir de cabeçalho + linhas, já com faixa de
+   título, zebra, filtro, painéis congelados e larguras. Toda aba de
+   todo relatório passa por aqui: o comportamento é o mesmo em todos.
+
+   opcoes:
+     titulo    texto da faixa preta
+     sub       linha de contexto embaixo do título
+     formatos  [{col, z}] formato numérico por coluna
+     larguras  [n, n, ...] largura por coluna
+     grupos    [{de, ate, rot, cor}] banda colorida sobre as colunas
+     estado    (linha, i) => 'ok'|'alerta'|'ruim'|null  pinta a célula */
 function montarAba(cab, linhas, opcoes) {
-  const o   = opcoes || {};
-  const aoa = [cab].concat(linhas);
-  const aba = XLSX.utils.aoa_to_sheet(aoa);
-  const ultima = aoa.length;
-  (o.formatos || []).forEach(f => formatar(aba, f.col, 2, ultima, f.z));
+  const o      = opcoes || {};
+  const nCols  = cab.length;
+  const temTit = !!o.titulo;
+  // 0-based: onde a banda de grupo, o cabeçalho e os dados começam
+  const rGrupo = temTit ? 2 : -1;
+  const rCab   = (temTit ? 2 : 0) + (o.grupos ? 1 : 0);
+  const rDados = rCab + 1;
+
+  const aba = XLSX.utils.aoa_to_sheet([cab].concat(linhas), { origin: { r: rCab, c: 0 } });
+
+  if (temTit) exTitulo(aba, o.titulo, o.sub, nCols);
+
+  // banda de grupo: colore faixas de colunas que respondem à mesma pergunta
+  if (o.grupos) {
+    for (let i = 0; i < nCols; i++) {
+      const g = o.grupos.find(x => i >= x.de && i <= x.ate);
+      aba[col(i) + (rGrupo + 1)] = { t: 's', v: (g && i === g.de) ? g.rot : '', s: {
+        font: { bold: true, sz: 9, color: { rgb: EX.BRANCO } },
+        fill: { patternType: 'solid',
+                fgColor: { rgb: g ? (EX.GRUPO[g.cor] || EX.GRUPO.cinza) : EX.TXT2 } },
+        alignment: { vertical: 'center', horizontal: 'left', indent: 1 },
+      } };
+    }
+    o.grupos.forEach(g => {
+      if (g.ate > g.de) (aba['!merges'] = aba['!merges'] || []).push(
+        { s: { r: rGrupo, c: g.de }, e: { r: rGrupo, c: g.ate } });
+    });
+  }
+
+  // cabeçalho de coluna
+  for (let i = 0; i < nCols; i++) {
+    const c = aba[col(i) + (rCab + 1)];
+    if (c) c.s = {
+      font: { bold: true, sz: 9, color: { rgb: EX.CAB_TXT } },
+      fill: { patternType: 'solid', fgColor: { rgb: EX.CAB } },
+      alignment: { vertical: 'center', wrapText: true },
+      border: { bottom: borda('CBD5E1'), top: borda('CBD5E1') },
+    };
+  }
+
+  // dados: zebra, alinhamento por tipo, formato numérico, cor de estado
+  const fmt = {};
+  (o.formatos || []).forEach(f => { fmt[f.col] = f.z; });
+
+  linhas.forEach((linha, li) => {
+    const fundo = (li % 2) ? EX.ZEBRA : EX.BRANCO;
+    for (let i = 0; i < nCols; i++) {
+      const cel = aba[col(i) + (rDados + li + 1)];
+      if (!cel) continue;
+      const num = typeof cel.v === 'number';
+      if (num && fmt[i]) { cel.t = 'n'; cel.z = fmt[i]; }
+
+      let corTxt = i === 0 ? EX.TXT : EX.TXT2;
+      let corBg  = fundo;
+      const est  = o.estado && o.estado(linha, i);
+      if (est === 'ok')     { corTxt = EX.OK;     corBg = EX.OK_BG; }
+      if (est === 'alerta') { corTxt = EX.ALERTA; corBg = EX.ALERTA_BG; }
+      if (est === 'ruim')   { corTxt = EX.RUIM;   corBg = EX.RUIM_BG; }
+
+      cel.s = {
+        font: { sz: 10, bold: i === 0 || !!est, color: { rgb: corTxt } },
+        fill: { patternType: 'solid', fgColor: { rgb: corBg } },
+        alignment: { vertical: 'center', horizontal: num ? 'right' : 'left',
+                     indent: num ? 0 : 1 },
+        border: { bottom: borda() },
+      };
+    }
+  });
+
   aba['!cols'] = cab.map((c, i) =>
     ({ wch: (o.larguras && o.larguras[i]) || Math.max(12, String(c).length + 2) }));
-  aba['!autofilter'] = { ref: 'A1:' + col(cab.length - 1) + ultima };
-  aba['!freeze'] = { xSplit: 0, ySplit: 1 };
+  const ultima = rDados + linhas.length;
+  aba['!autofilter'] = { ref: 'A' + (rCab + 1) + ':' + col(nCols - 1) + ultima };
+  // congela tudo que está acima dos dados, e a coluna do nome.
+  // Quem aplica é baixarPlanilha(), remendando o XML — a biblioteca
+  // não grava <pane>.
+  aba['!congelar'] = { x: 1, y: rDados, cel: 'B' + (rDados + 1) };
+  aba['!ref'] = 'A1:' + col(nCols - 1) + Math.max(ultima, rDados);
   return aba;
 }
+
+/* ── GRAVAÇÃO DA PLANILHA ────────────────────────────────────────
+   Nem o SheetJS nem o xlsx-js-style escrevem painéis congelados: o
+   writer emite <sheetView/> sem filhos, conferido no XML gerado. O
+   `aba['!freeze']` que existia neste arquivo nunca fez efeito — as
+   exportações de Obras e Cobertura saíram sem congelamento nenhum
+   desde sempre, apesar do comentário dizer o contrário.
+
+   Então: gera o .xlsx normalmente, abre o zip, injeta o <pane> em
+   cada planilha e fecha de novo. Cada aba traz o que quer congelar
+   em `!congelar`; a ordem dos sheetN.xml acompanha wb.SheetNames. */
+function baixarPlanilha(wb, nomeArquivo) {
+  const bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  let saida = new Uint8Array(bytes);
+
+  try {
+    if (window.fflate) {
+      const zip = fflate.unzipSync(saida);
+      const dec = new TextDecoder(), enc = new TextEncoder();
+      wb.SheetNames.forEach((nome, i) => {
+        const cfg = wb.Sheets[nome] && wb.Sheets[nome]['!congelar'];
+        if (!cfg) return;
+        const caminho = 'xl/worksheets/sheet' + (i + 1) + '.xml';
+        if (!zip[caminho]) return;
+        const pane = '<pane xSplit="' + cfg.x + '" ySplit="' + cfg.y +
+                     '" topLeftCell="' + cfg.cel +
+                     '" activePane="bottomRight" state="frozen"/>';
+        zip[caminho] = enc.encode(
+          dec.decode(zip[caminho])
+             .replace(/<sheetView([^>]*?)\/>/, '<sheetView$1>' + pane + '</sheetView>'));
+      });
+      saida = fflate.zipSync(zip);
+    }
+  } catch (e) {
+    // se o remendo falhar, o arquivo original continua bom — só sem
+    // painel congelado. Melhor isso do que não baixar nada.
+    console.warn('Não foi possível congelar os painéis:', e);
+  }
+
+  const url = URL.createObjectURL(
+    new Blob([saida], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = nomeArquivo;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* Aba RESUMO: faixa de título, cartões de indicador e a lista do que
+   o arquivo contém. Mesma ideia da aba RESUMO da planilha de licenças
+   — o número grande colorido por estado, o rótulo pequeno em cima e a
+   explicação apagada embaixo.
+
+   cartoes: [{rot, val, sub, cor}] — cor em 'ok'|'alerta'|'ruim'|'info'
+   indice:  [[aba, descricao], ...] */
+function abaResumo(titulo, sub, cartoes, indice, contexto) {
+  const LARG = 11;                       // colunas que a faixa ocupa
+  const aba  = {};
+  exTitulo(aba, titulo, sub, LARG);
+
+  const txt = (ref, v, s) => { aba[ref] = { t: 's', v: v, s: s }; };
+  const base = { fill: { patternType: 'solid', fgColor: { rgb: EX.BRANCO } } };
+
+  // ── cartões, dois por coluna de largura, a partir da linha 4 ──
+  const CORES = { ok: EX.OK, alerta: EX.ALERTA, ruim: EX.RUIM, info: EX.INFO };
+  let linha = 4;
+  cartoes.forEach((c, i) => {
+    const cl = col(1 + (i % 4) * 2);                 // B, D, F, H
+    if (i > 0 && i % 4 === 0) linha += 5;
+    txt(cl + linha, c.rot, Object.assign({}, base, {
+      font: { bold: true, sz: 8, color: { rgb: EX.TXT3 } },
+      alignment: { vertical: 'center' },
+      border: { top: borda('CBD5E1') },
+    }));
+    aba[cl + (linha + 1)] = {
+      t: typeof c.val === 'number' ? 'n' : 's', v: c.val,
+      z: c.z || undefined,
+      s: Object.assign({}, base, {
+        font: { bold: true, sz: 18, color: { rgb: CORES[c.cor] || EX.TXT } },
+        alignment: { vertical: 'center' },
+      }) };
+    txt(cl + (linha + 2), c.sub || '', Object.assign({}, base, {
+      font: { sz: 8, color: { rgb: EX.TXT3 } },
+      alignment: { vertical: 'center', wrapText: true },
+    }));
+    [linha, linha + 1, linha + 2].forEach(l => {
+      const viz = col(2 + (i % 4) * 2) + l;
+      if (!aba[viz]) aba[viz] = { t: 's', v: '', s: base };
+    });
+  });
+
+  // ── contexto do recorte ──
+  let l = linha + 5;
+  (contexto || []).forEach(([rot, val]) => {
+    txt('B' + l, rot, { font: { bold: true, sz: 9, color: { rgb: EX.TXT2 } } });
+    txt('D' + l, String(val), { font: { sz: 9, color: { rgb: EX.TXT2 } } });
+    l++;
+  });
+
+  // ── índice das abas ──
+  if (indice && indice.length) {
+    l += 1;
+    txt('B' + l, 'O QUE TEM NESTE ARQUIVO', {
+      font: { bold: true, sz: 9, color: { rgb: EX.BRANCO } },
+      fill: { patternType: 'solid', fgColor: { rgb: EX.GRUPO.cinza } },
+      alignment: { vertical: 'center', indent: 1 },
+    });
+    for (let i = 2; i < LARG; i++) {
+      aba[col(i) + l] = { t: 's', v: '', s: aba['B' + l].s };
+    }
+    (aba['!merges'] = aba['!merges'] || []).push(
+      { s: { r: l - 1, c: 1 }, e: { r: l - 1, c: LARG - 1 } });
+    l++;
+    indice.forEach(([nome, desc], i) => {
+      const fundo = (i % 2) ? EX.ZEBRA : EX.BRANCO;
+      txt('B' + l, nome, {
+        font: { bold: true, sz: 9, color: { rgb: EX.TXT } },
+        fill: { patternType: 'solid', fgColor: { rgb: fundo } },
+        alignment: { vertical: 'center', indent: 1 },
+        border: { bottom: borda() } });
+      txt('D' + l, desc, {
+        font: { sz: 9, color: { rgb: EX.TXT2 } },
+        fill: { patternType: 'solid', fgColor: { rgb: fundo } },
+        alignment: { vertical: 'center' },
+        border: { bottom: borda() } });
+      for (const c of ['C', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) {
+        aba[c + l] = { t: 's', v: '', s: aba['D' + l].s };
+      }
+      l++;
+    });
+  }
+
+  aba['!cols'] = [{ wch: 3 }, { wch: 26 }, { wch: 3 }, { wch: 22 }, { wch: 3 },
+                  { wch: 22 }, { wch: 3 }, { wch: 22 }, { wch: 3 }, { wch: 14 }, { wch: 3 }];
+  aba['!ref'] = 'A1:' + col(LARG - 1) + (l + 2);
+  return aba;
+}
+
 
 /* ── RELATÓRIO DE COBERTURA ──────────────────────────────────────
    Quem não está lançando hora. Sai com o mesmo recorte da tela — se o
@@ -3672,8 +3972,10 @@ function exportarCoberturaExcel() {
   ]);
   XLSX.utils.book_append_sheet(wb,
     montarAba(cabAtraso, linAtraso, {
+      titulo: 'QUEM ESTA SEM LANCAR', sub: periodo + (recorte ? ' · ' + recorte : ''),
       formatos: [{ col: 4, z: FMT_HORA }],
       larguras: [30, 18, 18, 18, 17, 16],
+      estado: (l, i) => i === 3 ? (l[3] >= 3 ? 'ruim' : l[3] >= 1 ? 'alerta' : null) : null,
     }), 'Sem lancar');
 
   // ── 2. quem nunca usou o sistema ──
@@ -3682,7 +3984,8 @@ function exportarCoberturaExcel() {
   if (linNunca.length) {
     XLSX.utils.book_append_sheet(wb,
       montarAba(['Colaborador', 'Setor', 'Cadastro'], linNunca,
-                { larguras: [30, 18, 16] }), 'Nunca lancaram');
+                { titulo: 'NUNCA LANCARAM NADA', sub: 'cadastrados que nunca usaram o sistema',
+                  larguras: [30, 18, 16] }), 'Nunca lancaram');
   }
 
   // ── 3. o quadro inteiro, com a cobertura de cada um ──
@@ -3695,8 +3998,10 @@ function exportarCoberturaExcel() {
   ]);
   XLSX.utils.book_append_sheet(wb,
     montarAba(cabGeral, linGeral, {
+      titulo: 'COBERTURA DO PERIODO', sub: periodo + (recorte ? ' · ' + recorte : ''),
       formatos: [{ col: 4, z: FMT_PCT }, { col: 5, z: FMT_HORA }],
       larguras: [30, 18, 15, 16, 12, 17, 18, 18],
+      estado: (l, i) => i === 4 ? (l[4] >= 0.9 ? 'ok' : l[4] >= 0.6 ? 'alerta' : 'ruim') : null,
     }), 'Cobertura do periodo');
 
   // ── 4. inativos: fora da cobrança, mas o controle é de todo mundo ──
@@ -3706,7 +4011,9 @@ function exportarCoberturaExcel() {
     ]);
     XLSX.utils.book_append_sheet(wb,
       montarAba(['Colaborador', 'Setor', 'Último lançamento', 'Horas no histórico'],
-                linInat, { formatos: [{ col: 3, z: FMT_HORA }],
+                linInat, { titulo: 'COLABORADORES INATIVOS',
+                           sub: 'fora da cobranca — o historico de horas continua valendo',
+                           formatos: [{ col: 3, z: FMT_HORA }],
                            larguras: [30, 18, 18, 19] }), 'Inativos');
   }
 
@@ -3717,7 +4024,11 @@ function exportarCoberturaExcel() {
     ]);
     XLSX.utils.book_append_sheet(wb,
       montarAba(['Obra', 'Status no cadastro', 'Último lançamento', 'Dias úteis parada'],
-                linObras, { larguras: [40, 22, 18, 18] }), 'Obras sem movimento');
+                linObras, { titulo: 'OBRAS SEM MOVIMENTO',
+                            sub: 'paradas ha 5 dias uteis ou mais',
+                            larguras: [40, 22, 18, 18],
+                            estado: (l, i) => i === 3 && l[3] >= 20 ? 'ruim' : null },
+                ), 'Obras sem movimento');
   }
 
   // ── capa: o que este arquivo é, e de quando ──
@@ -3744,7 +4055,7 @@ function exportarCoberturaExcel() {
   XLSX.utils.book_append_sheet(wb, abaCapa, 'Leia-me');
 
   const sufixo = recorte ? '_' + recorte.replace(/[^\w]+/g, '-').toLowerCase() : '';
-  XLSX.writeFile(wb, 'cobertura' + sufixo + '_' + isoDe(new Date()) + '.xlsx');
+  baixarPlanilha(wb, 'cobertura' + sufixo + '_' + isoDe(new Date()) + '.xlsx');
 }
 
 
@@ -3789,14 +4100,24 @@ function exportarObrasExcel() {
     ]);
   });
 
-  const aba = XLSX.utils.aoa_to_sheet(aoa);
-  const ultLinha = aoa.length;
-  [6, 7, 8].forEach(i => formatar(aba, i, 2, ultLinha, FMT_HORA));
-  [9, 15].forEach(i => formatar(aba, i, 2, ultLinha, FMT_PCT));
-  [13, 14, 16].forEach(i => formatar(aba, i, 2, ultLinha, FMT_BRL));
-  aba['!cols'] = cab.map((c, i) => ({ wch: i === 0 ? 38 : Math.max(11, c.length + 2) }));
-  aba['!autofilter'] = { ref: 'A1:' + col(cab.length - 1) + ultLinha };
-  aba['!freeze'] = { xSplit: 1, ySplit: 1 };
+  /* As bandas de grupo separam as três perguntas que a tabela
+     responde: o que a obra é, quanto tempo custou, e quanto do
+     contrato já foi. Sem elas são 21 colunas em fila indiana. */
+  const aba = montarAba(cab, aoa.slice(1), {
+    titulo: 'OBRAS', sub: resumoCurto(),
+    formatos: [{ col: 6, z: FMT_HORA }, { col: 7, z: FMT_HORA }, { col: 8, z: FMT_HORA },
+               { col: 9, z: FMT_PCT },  { col: 15, z: FMT_PCT },
+               { col: 13, z: FMT_BRL }, { col: 14, z: FMT_BRL }, { col: 16, z: FMT_BRL }],
+    larguras: cab.map((c, i) => i === 0 ? 38 : Math.max(11, c.length + 2)),
+    grupos: [
+      { de: 0,  ate: 5,  rot: 'A OBRA',    cor: 'azul'  },
+      { de: 6,  ate: 12, rot: 'TEMPO',     cor: 'cinza' },
+      { de: 13, ate: 16, rot: 'DINHEIRO',  cor: 'verde' },
+      { de: 17, ate: 20, rot: 'CALENDÁRIO', cor: 'ambar' },
+    ],
+    // % consumido acima do contrato é o que precisa saltar
+    estado: (l, i) => i === 15 ? (l[15] > 1 ? 'ruim' : l[15] > 0.85 ? 'alerta' : null) : null,
+  });
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, aba, 'Obras');
@@ -3818,14 +4139,277 @@ function exportarObrasExcel() {
       o.data_fim    ? fmtData(o.data_fim)    : '',
       o.responsaveis || '',
     ]));
-    const aba2 = XLSX.utils.aoa_to_sheet(aoa2);
-    formatar(aba2, 5, 2, aoa2.length, FMT_BRL);
-    aba2['!cols'] = cab2.map((c, i) => ({ wch: i === 0 ? 38 : Math.max(12, c.length + 2) }));
-    aba2['!autofilter'] = { ref: 'A1:' + col(cab2.length - 1) + aoa2.length };
+    const aba2 = montarAba(cab2, aoa2.slice(1), {
+      titulo: 'CADASTRADAS SEM NENHUMA HORA',
+      sub: 'estão no cadastro de obras e ninguém lançou tempo nelas',
+      formatos: [{ col: 5, z: FMT_BRL }],
+      larguras: cab2.map((c, i) => i === 0 ? 38 : Math.max(12, c.length + 2)),
+    });
     XLSX.utils.book_append_sheet(wb, aba2, 'Cadastradas sem horas');
   }
 
-  XLSX.writeFile(wb, 'obras_' + isoDe(new Date()) + '.xlsx');
+  baixarPlanilha(wb, 'obras_' + isoDe(new Date()) + '.xlsx');
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   EXPORTAÇÃO POR ABA
+   ═══════════════════════════════════════════════════════════════
+   O botão Excel baixa o que está na aba aberta — na de Obras sai
+   Obras, na de Cobertura sai Cobertura. Na Visão Geral sai tudo,
+   uma aba de planilha por tela.
+
+   Não há um exportador escrito à mão por aba. Toda tabela da tela já
+   se registra em S.tabelas (colunas + dados) para o re-render
+   dirigido, e todo indicador em S.kpisNaTela. O exportador lê esses
+   dois registros. Consequência: o que vai para a planilha é
+   exatamente o que está na tela, com as mesmas colunas e os mesmos
+   números, e tela nova nasce exportável sem tocar aqui. */
+
+const ABAS_PAINEL = [
+  ['resumo',        'Visão Geral'],
+  ['colaboradores', 'Colaboradores'],
+  ['obras',         'Obras'],
+  ['setores',       'Setores'],
+  ['disciplinas',   'Disciplinas'],
+  ['indireto',      'Tempo Indireto'],
+  ['custos',        'Custos'],
+  ['fechamento',    'Fechamento'],
+  ['resultado',     'Resultado'],
+  ['cobertura',     'Cobertura'],
+  ['alertas',       'Alertas'],
+  ['custohora',     'Custo Hora'],
+];
+
+/* Nome de aba a partir do id da tabela. O Excel limita a 31
+   caracteres e proíbe : \ / ? * [ ] — e não aceita duas abas com o
+   mesmo nome. O fallback trata id que não esteja no mapa, para
+   tabela nova não sair como "undefined". */
+const NOME_TABELA = {
+  'tab-colab': 'Colaboradores', 'tab-obra': 'Obras',
+  'tab-setor': 'Setores', 'tab-disc': 'Disciplinas',
+  'cob-nunca': 'Nunca lancaram', 'cob-atraso': 'Sem lancar',
+  'cob-geral': 'Cobertura', 'cob-inativos': 'Inativos',
+  'cob-obras': 'Obras paradas', 'cob-faixa': 'Atraso de lancamento',
+  'cob-ranking': 'Quem lanca com atraso',
+  'ind-tipo': 'Tipo de tempo indireto', 'ind-colab': 'Indireto por pessoa',
+  'cst-colab': 'Custo por pessoa', 'cst-obra': 'Custo por obra',
+  'cst-disc': 'Custo por disciplina',
+  'res-obra': 'Resultado por obra', 'res-mes': 'Resultado por mes',
+  'res-perdas': 'Perdas',
+  'fec-colab': 'Fechamento por pessoa', 'fec-obra': 'Fechamento por obra',
+  'ch-lista': 'Valor hora',
+};
+
+function nomeDeAba(id, usados) {
+  let n = NOME_TABELA[id] ||
+          String(id).replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  n = n.replace(/[:\\\/?*\[\]]/g, '-').slice(0, 31);
+  if (!usados.has(n)) { usados.add(n); return n; }
+  for (let i = 2; i < 99; i++) {
+    const t = n.slice(0, 28) + ' ' + i;
+    if (!usados.has(t)) { usados.add(t); return t; }
+  }
+  return n.slice(0, 29) + '~';
+}
+
+/* Roda a tela indicada e devolve o que ela registrou, sem tocar no
+   DOM: as funções telaXxx() só montam texto, e grafico() devolve a
+   marcação do canvas sem criar gráfico nenhum. É isso que permite
+   exportar doze abas sem piscar a tela. */
+function capturarTela(aba, linhas) {
+  const guardaT = S.tabelas, guardaK = S.kpisNaTela;
+  S.tabelas = {}; S.kpisNaTela = [];
+  try {
+    switch (aba) {
+      case 'colaboradores': telaAgrupada(linhas, 'Colaborador', r => r.colaborador, 'tab-colab'); break;
+      case 'obras':         telaAgrupada(linhas, 'Obra',        r => r.obra,        'tab-obra', true); break;
+      case 'setores':       telaAgrupada(linhas, 'Setor',       r => r.setor,       'tab-setor'); break;
+      case 'disciplinas':   telaAgrupada(linhas, 'Disciplina',  r => r.disciplina,  'tab-disc'); break;
+      case 'indireto':      telaIndireto(linhas);   break;
+      case 'custos':        telaCustos(linhas);     break;
+      case 'fechamento':    telaFechamento(linhas); break;
+      case 'resultado':     telaResultado(linhas);  break;
+      case 'custohora':     telaCustoHora(linhas);  break;
+      case 'cobertura':     telaCobertura(linhas);  break;
+      case 'alertas':       telaAlertas(linhas);    break;
+      case 'registros':     telaRegistros(linhas);  break;
+      default:              telaResumo(linhas);     break;
+    }
+  } catch (e) {
+    console.error('Falha ao capturar a aba', aba, e);
+  }
+  const res = { tabelas: S.tabelas, kpis: S.kpisNaTela };
+  S.tabelas = guardaT; S.kpisNaTela = guardaK;
+  return res;
+}
+
+/* Converte uma tabela da tela (colunas + dados) numa aba de planilha.
+   O texto vai como texto e o número como número: na tela "436:00" é
+   string, mas numa planilha precisa ser hora de verdade, senão não
+   soma. É por isso que a conversão olha o `tipo` da coluna. */
+function abaDeTabela(reg, titulo, sub) {
+  const cols = reg.colunas;
+  const cab  = cols.map(c => String(c.rot).replace(/<[^>]*>/g, ''));
+  const Z = { horas: FMT_HORA, pct: FMT_PCT, brl: FMT_BRL, brl2: 'R$ #,##0.00',
+              capacidade: FMT_PCT };
+
+  const formatos = [];
+  cols.forEach((c, i) => { if (Z[c.tipo]) formatos.push({ col: i, z: Z[c.tipo] }); });
+
+  const ord  = S.ordem[reg.id] || reg.ordemPadrao;
+  const dados = ord ? ordenarPor(reg.dados, ord.campo, ord.desc) : reg.dados;
+
+  const linhas = dados.map(d => cols.map(c => {
+    const v = d[c.campo];
+    if (c.tipo === 'horas')      return emHoras(v);
+    if (c.tipo === 'pct' || c.tipo === 'capacidade') return Number(v) || 0;
+    if (c.tipo === 'brl' || c.tipo === 'brl2')       return Number(v) || 0;
+    if (c.tipo === 'num')        return Number(v) || 0;
+    if (c.tipo === 'data')       return v ? fmtData(v) : '';
+    if (c.tipo === 'tag')        return (TIPOS[v] && TIPOS[v].nome) || String(v ?? '');
+    return v == null ? '' : String(v);
+  }));
+
+  const larguras = cols.map((c, i) =>
+    i === 0 ? 30 : Math.max(12, String(c.rot).length + 3));
+
+  return montarAba(cab, linhas, {
+    titulo: titulo, sub: sub, formatos: formatos, larguras: larguras,
+    /* Pinta a célula de "% coberto" e similares pela mesma régra da
+       tela, para o Excel e o painel contarem a mesma história. */
+    estado: (linha, i) => {
+      if (cols[i].tipo !== 'capacidade') return null;
+      const p = Number(linha[i]) || 0;
+      return p >= 0.9 ? 'ok' : p >= 0.6 ? 'alerta' : 'ruim';
+    },
+  });
+}
+
+/* Linha de contexto que vai no RESUMO e no subtítulo de cada aba:
+   sem ela, dois arquivos do mesmo relatório com recortes diferentes
+   ficam indistinguíveis. */
+function contextoDoFiltro() {
+  const f = S.filtros;
+  const l = [];
+  l.push(['Período', (f.de || f.ate)
+    ? (f.de ? fmtData(f.de) : 'início') + ' a ' + (f.ate ? fmtData(f.ate) : 'hoje')
+    : 'todo o histórico']);
+  if (f.colab)        l.push(['Colaborador', f.colab]);
+  if (f.setor)        l.push(['Setor', f.setor]);
+  if (S.obrasSel.size) l.push(['Obras', [...S.obrasSel].join(' · ')]);
+  if (f.disc)         l.push(['Disciplina', f.disc]);
+  if (f.tipo)         l.push(['Tipo de hora', TIPOS[f.tipo] ? TIPOS[f.tipo].nome : f.tipo]);
+  if (f.busca)        l.push(['Busca', f.busca]);
+  if (S.modoSistema)  l.push(['Modo', 'igual ao sistema']);
+  l.push(['Gerado em', fmtData(isoDe(new Date())) + ' ' +
+    new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })]);
+  return l;
+}
+
+const resumoCurto = () => {
+  const f = S.filtros;
+  const p = (f.de || f.ate)
+    ? (f.de ? fmtData(f.de) : 'início') + ' a ' + (f.ate ? fmtData(f.ate) : 'hoje')
+    : 'todo o histórico';
+  return p + (f.setor ? ' · ' + f.setor : '') +
+         (f.colab ? ' · ' + f.colab : '') +
+         (S.obrasSel.size ? ' · ' + S.obrasSel.size + ' obra(s)' : '');
+};
+
+const corDoKpi = (c) => c === 'ok' ? 'ok' : c === 'warn' ? 'alerta'
+                      : c === 'bad' ? 'ruim' : 'info';
+
+/* Baixa a aba aberta. Na Visão Geral, baixa tudo. */
+function exportarAbaAtual() {
+  const linhas = filtrar();
+  if (!linhas.length) { alert('Nada para exportar no filtro atual.'); return; }
+
+  // a aba Registros é a lista crua: continua com o exportador próprio,
+  // que reproduz as colunas e a linha TOTAL do Registro de Horas
+  if (S.aba === 'registros') { exportarExcel(); return; }
+  if (S.aba === 'resumo')    { exportarTudoExcel(linhas); return; }
+
+  const nomeAba = (ABAS_PAINEL.find(a => a[0] === S.aba) || [, S.aba])[1];
+  const cap = capturarTela(S.aba, linhas);
+  const tabelas = Object.keys(cap.tabelas);
+
+  if (!tabelas.length && !cap.kpis.length) {
+    alert('Esta aba não tem tabela para exportar.');
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+  const usados = new Set();
+
+  if (cap.kpis.length) {
+    XLSX.utils.book_append_sheet(wb,
+      abaResumo(nomeAba.toUpperCase(), resumoCurto(),
+        cap.kpis.map(k => ({ rot: k.rot, val: k.val, sub: k.sub, cor: corDoKpi(k.cor) })),
+        tabelas.map(id => [NOME_TABELA[id] || id,
+                           fmtN(cap.tabelas[id].dados.length) + ' linhas']),
+        contextoDoFiltro()),
+      nomeDeAba('Resumo', usados));
+  }
+
+  tabelas.forEach(id => {
+    const reg = cap.tabelas[id];
+    if (!reg.dados || !reg.dados.length) return;
+    reg.id = id;
+    XLSX.utils.book_append_sheet(wb,
+      abaDeTabela(reg, (NOME_TABELA[id] || id).toUpperCase(), resumoCurto()),
+      nomeDeAba(id, usados));
+  });
+
+  if (!wb.SheetNames.length) { alert('Esta aba não tem tabela para exportar.'); return; }
+
+  const limpo = nomeAba.toLowerCase().replace(/[^\w]+/g, '-');
+  baixarPlanilha(wb, limpo + '_' + isoDe(new Date()) + '.xlsx');
+}
+
+/* Visão Geral: o arquivo completo, uma aba de planilha por tela do
+   painel, com um RESUMO na frente que indexa o resto. */
+function exportarTudoExcel(linhas) {
+  const wb = XLSX.utils.book_new();
+  const usados = new Set();
+  const capturas = [];
+
+  ABAS_PAINEL.forEach(([chave, rot]) => {
+    const cap = capturarTela(chave, linhas);
+    capturas.push([chave, rot, cap]);
+  });
+
+  // ── RESUMO: os indicadores da Visão Geral + índice do arquivo ──
+  const visao = capturas.find(c => c[0] === 'resumo');
+  const indice = [];
+  capturas.forEach(([, rot, cap]) => {
+    Object.keys(cap.tabelas).forEach(id => {
+      const reg = cap.tabelas[id];
+      if (reg.dados && reg.dados.length) {
+        indice.push([(NOME_TABELA[id] || id), rot + ' · ' + fmtN(reg.dados.length) + ' linhas']);
+      }
+    });
+  });
+
+  XLSX.utils.book_append_sheet(wb,
+    abaResumo('PAINEL DE PRODUTIVIDADE', resumoCurto(),
+      (visao ? visao[2].kpis : []).map(k =>
+        ({ rot: k.rot, val: k.val, sub: k.sub, cor: corDoKpi(k.cor) })),
+      indice, contextoDoFiltro()),
+    nomeDeAba('Resumo', usados));
+
+  capturas.forEach(([, rot, cap]) => {
+    Object.keys(cap.tabelas).forEach(id => {
+      const reg = cap.tabelas[id];
+      if (!reg.dados || !reg.dados.length) return;
+      reg.id = id;
+      XLSX.utils.book_append_sheet(wb,
+        abaDeTabela(reg, (NOME_TABELA[id] || id).toUpperCase(), rot + ' · ' + resumoCurto()),
+        nomeDeAba(id, usados));
+    });
+  });
+
+  baixarPlanilha(wb, 'painel-completo_' + isoDe(new Date()) + '.xlsx');
 }
 
 
@@ -3894,7 +4478,7 @@ function exportarExcel() {
                      {wch:16},{wch:15},{wch:19},{wch:14}];
   XLSX.utils.book_append_sheet(wb, abaRes, 'Resumo');
 
-  XLSX.writeFile(wb, 'produtividade_' + isoDe(new Date()) + '.xlsx');
+  baixarPlanilha(wb, 'produtividade_' + isoDe(new Date()) + '.xlsx');
 }
 
 /* ───────────────────────────────────────────────────────────────
@@ -4077,7 +4661,7 @@ function ligarEventos() {
   $('#form-login').addEventListener('submit', entrar);
   $('#btn-sair').addEventListener('click', sair);
   $('#btn-atualizar').addEventListener('click', () => carregarDados());
-  $('#btn-excel').addEventListener('click', exportarExcel);
+  $('#btn-excel').addEventListener('click', exportarAbaAtual);
 
   $('#nav-abas').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-aba]');
