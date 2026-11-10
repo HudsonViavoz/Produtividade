@@ -496,10 +496,14 @@ async function carregarDados(silencioso) {
       //                  nova. Assim algumas linhas vêm duas vezes e outras
       //                  não vêm — que é justamente o que reproduz os números
       //                  daquele sistema.
-      const colunaOrdem = S.modoSistema ? 'data' : 'id';
+      // ATUALIZAÇÃO 10/11/2026: o Registro de Horas publicado já pagina por
+      // `id` (correção do Hudson no ar), então reproduzir a leitura instável
+      // por `data` passou a INTRODUZIR erro em vez de espelhar o sistema.
+      // Agora o modo "igual ao sistema" muda só os CRITÉRIOS de contagem
+      // (os 5 rótulos excluídos, obras paradas, formato) — nunca a leitura.
       let q = sb.from('registros')
         .select('id,user_id,colaborador,obra,data,horas,hora_str,obs,setor,disciplina,tarefa,created_at')
-        .order(colunaOrdem, { ascending: !S.modoSistema })
+        .order('id', { ascending: true })
         .range(de, de + PAG - 1);
 
       if (!S.admin) q = q.eq('user_id', S.usuario.id);
@@ -528,14 +532,14 @@ async function carregarDados(silencioso) {
     if (vistos.has(r.id)) { repetidos++; continue; }
     vistos.add(r.id); unicos.push(r);
   }
-  if (!S.modoSistema) todos = unicos;
+  todos = unicos;
 
   S.integridade = {
     totalNoBanco, carregados: todos.length, repetidos,
     unicos: vistos.size,
     perdidos: totalNoBanco === null ? null : totalNoBanco - vistos.size,
     // no modo sistema a divergência é esperada — é o que se quer reproduzir
-    ok: S.modoSistema || totalNoBanco === null || totalNoBanco === todos.length,
+    ok: totalNoBanco === null || totalNoBanco === todos.length,
   };
   if (!S.integridade.ok) {
     console.warn('Divergência ao ler registros:', S.integridade);
@@ -1906,11 +1910,10 @@ function telaAgrupada(linhas, rotulo, chaveFn, idTab, soProjetos) {
     if (S.modoSistema) {
       html += '<div class="box" style="border-color:rgba(210,150,63,.38);margin:-18px 0 22px">' +
         '<span style="color:var(--warning-text)">Modo "igual ao sistema" ligado</span> ' +
-        '<span class="muted">— contagem de obras, critério e formato HH:MM iguais aos do ' +
-        'Registro de Horas. <b>As horas continuam diferentes</b>, e de propósito: aquele ' +
-        'sistema repete e perde linhas a cada carregamento, então o valor dele muda sozinho. ' +
-        'Os números aqui são os do banco. Use "Conferir agora" na aba Alertas para medir a ' +
-        'diferença na hora.</span></div>';
+        '<span class="muted">— contagem de obras, critério dos 5 rótulos excluídos e formato HH:MM ' +
+        'iguais aos do Registro de Horas. O Registro de Horas publicado já lê por <b>id</b> ' +
+        '(sem repetir nem perder linha), então o KPI <b>Horas</b> desta aba deve bater com o ' +
+        '"Total" dele, se os dois estiverem no mesmo instante e sem filtro.</span></div>';
     }
 
     if (divergentes.length) {
@@ -3554,18 +3557,16 @@ function render() {
   const av = $('#aviso-integridade');
   if (av) {
     const i = S.integridade;
-    if (S.modoSistema && i) {
-      // modo espelho: mostra o que está sendo reproduzido, sem alarme
+    if (S.modoSistema && i && i.ok) {
+      // leitura íntegra; o modo só troca os critérios de conta
       av.classList.remove('oculto');
       av.style.borderColor = 'rgba(210,150,63,.38)';
       av.style.background  = 'rgba(217,151,63,.10)';
       av.style.color       = 'var(--warning-text)';
-      av.innerHTML = '<b>Modo "igual ao sistema" ligado</b> — o painel está lendo do mesmo jeito ' +
-        'que o Registro de Horas, inclusive repetindo e perdendo linhas. ' +
-        'Nesta leitura: <b>' + fmtN(i.repetidos) + '</b> repetidas e <b>' +
-        fmtN(i.perdidos == null ? 0 : i.perdidos) + '</b> não vieram, de ' +
-        fmtN(i.totalNoBanco) + ' no banco. ' +
-        'Estes números mudam a cada Atualizar. Desmarque a caixa para ver os valores reais.';
+      av.innerHTML = '<b>Modo "igual ao sistema" ligado</b> — vale para a aba <b>Obras</b>: ' +
+        'exclui ATESTADO, FALTA, FERIADO, FERIAS e REUNIAO DE EQUIPE, como o Registro de Horas. ' +
+        'Compare o KPI <b>Horas</b> da aba Obras com o "Total" do sistema. ' +
+        'A Visão Geral continua com o critério do painel (inclui falta, atestado e reunião).';
     } else {
       av.style.borderColor = 'rgba(210,102,107,.42)';
       av.style.background  = 'rgba(201,89,94,.1)';
@@ -3806,6 +3807,124 @@ function montarAba(cab, linhas, opcoes) {
   // não grava <pane>.
   aba['!congelar'] = { x: 1, y: rDados, cel: 'B' + (rDados + 1) };
   aba['!ref'] = 'A1:' + col(nCols - 1) + Math.max(ultima, rDados);
+  /* Em que linha da planilha (1-based) comeca o dado. Quem precisa
+     escrever formula depois tem que saber disso, e recalcular a conta
+     do lado de fora erra: ja errou uma vez, pondo a formula na linha
+     do cabecalho e deixando a ultima linha sem. */
+  aba['!primeiraLinha'] = rDados + 1;
+  return aba;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DICIONÁRIO — o esclarecimento que vai junto com todo arquivo
+   ═══════════════════════════════════════════════════════════════
+   Planilha sem dicionário vira discussão: duas pessoas leem "Horas"
+   de jeitos diferentes e a reunião acaba sobre o que a coluna
+   significa, não sobre o número. Aqui cada coluna que sai em
+   qualquer aba tem uma frase dizendo o que é e de onde veio. */
+const DICIONARIO = {
+  'Colaborador': 'Nome da pessoa no cadastro (profiles). Quem trocou de nome ou de equipe aparece uma vez só, com o nome atual.',
+  'Setor':       'Setor do cadastro da pessoa, não o que foi digitado no lançamento.',
+  'Data':        'Dia TRABALHADO, informado por quem lançou. Não é o dia em que foi digitado.',
+  'Obra / Projeto': 'Texto digitado no lançamento. O painel agrupa por texto: dois jeitos de escrever o mesmo nome viram duas obras (ver aba Alertas).',
+  'Obra':        'Texto digitado no lançamento, agrupado por escrita exata.',
+  'Disciplina':  'Disciplina informada no lançamento. "—" quando ficou em branco.',
+  'Tarefa':      'Descrição livre digitada por quem lançou.',
+  'Observação':  'Campo livre do lançamento.',
+  'Horas':       'Horas declaradas por quem lançou. Formato [h]:mm — soma normalmente e passa de 24h sem zerar.',
+  'Horas pagas': 'Produtivas + indiretas + falta/atestado. É o tempo que a empresa pagou, não o trabalhado.',
+  'Horas trabalhadas': 'Produtivas + indiretas. Exclui falta e atestado.',
+  'Produtivas':  'Horas em obra de verdade. Reunião, gestão e serviço interno NÃO entram aqui.',
+  'Indiretas':   'Reunião, gestão, serviço interno/externo e treinamento. É trabalho, mas não em projeto.',
+  'Tempo indireto': 'Reunião, gestão, serviço interno/externo e treinamento.',
+  'Falta/atestado': 'Hora paga sem trabalho entregue. Atestado é direito — o número serve para dimensionar, não para cobrar.',
+  'Férias/feriado (fora)': 'Fica fora de TODAS as contas: não é tempo da empresa nem gera custo.',
+  'Tipo de hora': 'Deduzido do NOME DA OBRA, porque a tabela registros não tem campo próprio para isso. Ver as regras na aba Leia-me.',
+  '% Produtivo': 'Produtivas ÷ trabalhadas. Não usa as horas pagas como base.',
+  '% Ausência':  'Falta/atestado ÷ horas pagas.',
+  '% coberto':   'Dias com algum lançamento ÷ dias úteis do período.',
+  'Dias lançados': 'Dias de calendário com pelo menos um lançamento. Não mede quantas horas.',
+  'Dias a conferir': 'Dias úteis do período sem nenhum lançamento daquela pessoa. Feriado aparece aqui — o painel não tem calendário de feriados.',
+  'Dias-pessoa': 'Um dia de uma pessoa. Quatro pessoas na mesma segunda = 4, não 1.',
+  'Dias úteis parado': 'Dias úteis entre o último lançamento e hoje. Segunda a sexta; feriado não é descontado.',
+  'Último lançamento': 'Data trabalhada mais recente, mesmo fora do período filtrado.',
+  'Custo':       'Horas × valor/hora da pessoa no DIA trabalhado (respeita aumento). Zero quando a pessoa não tem valor cadastrado.',
+  'Custo total': 'Soma de produtivo + indireto + falta/atestado.',
+  'Valor do contrato': 'Campo valor_obra do cadastro de obras, convertido de texto pt-BR para número.',
+  '% consumido': 'Custo de mão de obra ÷ valor do contrato. Só mão de obra — não inclui material nem terceiros.',
+  'Lançado em':  'Dia em que a linha foi DIGITADA (created_at). Comparado com a Data mostra lançamento retroativo.',
+  'Dias de atraso': 'Entre o dia trabalhado e o dia em que foi digitado. Negativo = lançou antes de trabalhar.',
+};
+
+/* Aba Leia-me: o que o arquivo é, de onde veio, e o que cada coluna
+   significa. Entra em TODA exportação. */
+function abaDicionario(colunasUsadas, contexto, avisos) {
+  const linhas = [];
+  const push = (a, b, estilo) => linhas.push([a, b, estilo]);
+
+  push('DE ONDE VEM ESTE ARQUIVO', '', 'faixa');
+  push('Origem', 'Painel de Produtividade — leitura do mesmo banco do Registro de Horas.');
+  push('Natureza do dado', 'DECLARADO: é o que cada pessoa digitou ter feito. Não é medição automática.');
+  (contexto || []).forEach(([a, b]) => push(a, String(b)));
+
+  push('', '');
+  push('COMO O TIPO DE HORA É DECIDIDO', '', 'faixa');
+  push('Regra', 'Pelo NOME DA OBRA. A tabela registros não tem campo de tipo, então o painel deduz.');
+  Object.keys(TIPOS).forEach(k => {
+    const t = TIPOS[k];
+    const g = t.grupo === 'prod'  ? 'conta como trabalho em projeto'
+            : t.grupo === 'indir' ? 'conta como trabalho, fora de projeto'
+            : t.grupo === 'absen' ? 'hora paga sem trabalho'
+            : 'fora de todas as contas';
+    push(t.nome, g + (t.geraCusto ? ' · gera custo' : ' · não gera custo'));
+  });
+
+  push('', '');
+  push('QUEM ENTRA E QUEM FICA DE FORA', '', 'faixa');
+  push('Líderes', 'Os ' + LIDERES.length + ' nomes marcados como liderança saem das contas. Debora Dias sai só a partir de 01/08/2026 — antes disso ela lançava projeto normalmente.');
+  push('Inativos', 'Quem está INATIVO no cadastro não é cobrado de lançamento, mas o histórico de horas continua valendo.');
+  push('Nomes unificados', 'Quem trocou de nome/equipe aparece uma vez só. A identidade é o user_id, não o texto do nome.');
+
+  push('', '');
+  push('O QUE CONFERIR ANTES DE USAR', '', 'faixa');
+  push('Lançamento retroativo', 'Um mês fechado continua mudando enquanto houver gente lançando com atraso. Dois arquivos do mesmo período em dias diferentes PODEM divergir — não é erro.');
+  push('Obras com nome parecido', 'O agrupamento é por texto exato. Ver a aba Alertas do painel antes de somar por obra.');
+  push('Custo/hora', 'Fica no navegador de quem usa o painel (localStorage). Máquinas diferentes podem ter valores diferentes — confira o total antes de divulgar.');
+  (avisos || []).forEach(a => push('Atenção', a));
+
+  if (colunasUsadas && colunasUsadas.length) {
+    push('', '');
+    push('O QUE CADA COLUNA SIGNIFICA', '', 'faixa');
+    colunasUsadas.forEach(c => { if (DICIONARIO[c]) push(c, DICIONARIO[c]); });
+  }
+
+  // monta a planilha
+  const aba = {};
+  exTitulo(aba, 'LEIA-ME', 'o que este arquivo é, e o que cada coluna significa', 4);
+  let l = 4;
+  linhas.forEach(([a, b, estilo]) => {
+    if (estilo === 'faixa') {
+      aba['B' + l] = { t: 's', v: a, s: {
+        font: { bold: true, sz: 10, color: { rgb: EX.BRANCO } },
+        fill: { patternType: 'solid', fgColor: { rgb: EX.GRUPO.cinza } },
+        alignment: { vertical: 'center', indent: 1 } } };
+      aba['C' + l] = { t: 's', v: '', s: aba['B' + l].s };
+      (aba['!merges'] = aba['!merges'] || []).push(
+        { s: { r: l - 1, c: 1 }, e: { r: l - 1, c: 2 } });
+    } else if (a || b) {
+      aba['B' + l] = { t: 's', v: a, s: {
+        font: { bold: true, sz: 9, color: { rgb: EX.TXT } },
+        alignment: { vertical: 'top', indent: 1, wrapText: true },
+        border: { bottom: borda() } } };
+      aba['C' + l] = { t: 's', v: b, s: {
+        font: { sz: 9, color: { rgb: EX.TXT2 } },
+        alignment: { vertical: 'top', wrapText: true },
+        border: { bottom: borda() } } };
+    }
+    l++;
+  });
+  aba['!cols'] = [{ wch: 3 }, { wch: 30 }, { wch: 96 }, { wch: 3 }];
+  aba['!ref'] = 'A1:D' + (l + 1);
   return aba;
 }
 
@@ -4199,6 +4318,13 @@ const NOME_TABELA = {
   'res-perdas': 'Perdas',
   'fec-colab': 'Fechamento por pessoa', 'fec-obra': 'Fechamento por obra',
   'ch-lista': 'Valor hora',
+  'Por pessoa': 'Por pessoa',
+  'Por projeto': 'Por projeto',
+  'Pessoa x projeto': 'Pessoa x projeto',
+  'Conferencias': 'Conferencias',
+  'Detalhe por dia': 'Detalhe por dia',
+  'Leia-me': 'Leia-me',
+  'Resumo': 'Resumo',
 };
 
 function nomeDeAba(id, usados) {
@@ -4320,6 +4446,362 @@ const resumoCurto = () => {
 const corDoKpi = (c) => c === 'ok' ? 'ok' : c === 'warn' ? 'alerta'
                       : c === 'bad' ? 'ruim' : 'info';
 
+/* ═══════════════════════════════════════════════════════════════
+   DETALHE E COMPARATIVO COM O PROJECT DATA
+   ═══════════════════════════════════════════════════════════════
+   O Project Data mede por PESSOA × DIA × APLICATIVO/PROJETO: quanto
+   tempo a janela ficou aberta. O painel registra por PESSOA × DIA ×
+   OBRA: quanto a pessoa declarou. Pessoa + dia + projeto é o grão em
+   que os dois se encontram — é por isso que as abas abaixo saem
+   nesse grão, e não no total do mês.
+
+   São dados de naturezas diferentes e NÃO deveriam bater:
+     · reunião, relatório e e-mail são trabalho e não abrem projeto
+     · deixar o Revit aberto no almoço conta tempo de tela, não trabalho
+     · quem trabalha em dois monitores pode ter dois projetos somando
+       mais que a jornada
+   A planilha mostra a diferença; interpretar é com quem conhece a
+   rotina. Por isso a coluna se chama "Diferença", não "Erro". */
+
+/* Uma linha por lançamento: quem, que dia, em quê, quanto. É o que
+   responde "ela lançou 8h no dia 1º — 8h de quê?". */
+function abaDetalheDia(linhas) {
+  const cab = ['Data', 'Dia da semana', 'Colaborador', 'Setor', 'Obra / Projeto',
+               'Disciplina', 'Tipo de hora', 'Tarefa', 'Observação', 'Horas',
+               'Total do dia', 'Lançamentos no dia', 'Lançado em', 'Dias de atraso'];
+
+  // total e contagem por pessoa-dia, numa passada
+  const SEP = String.fromCharCode(1);
+  const porDia = new Map();
+  for (const r of linhas) {
+    const k = r.colaborador + SEP + r.data;
+    const v = porDia.get(k) || { h: 0, n: 0 };
+    v.h += r.horas; v.n++;
+    porDia.set(k, v);
+  }
+
+  const SEM = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  const ord = [...linhas].sort((a, b) =>
+    (a.colaborador || '').localeCompare(b.colaborador || '', 'pt-BR') ||
+    String(a.data).localeCompare(String(b.data)) ||
+    (a.obra || '').localeCompare(b.obra || '', 'pt-BR'));
+
+  const dados = ord.map(r => {
+    const d = porDia.get(r.colaborador + SEP + r.data) || { h: 0, n: 0 };
+    return [
+      r.data ? fmtData(r.data) : '',
+      r.data ? SEM[new Date(r.data + 'T12:00:00').getDay()] : '',
+      r.colaborador || '', r.setor || '', r.obra || '',
+      r.disciplina || '—', TIPOS[r._tipo].nome,
+      r.tarefa || '', r.obs || '',
+      emHoras(r.horas), emHoras(d.h), d.n,
+      r._criadoEm ? fmtData(r._criadoEm) : '',
+      r._atraso == null ? '' : r._atraso,
+    ];
+  });
+
+  return montarAba(cab, dados, {
+    titulo: 'DETALHE POR DIA — o que cada pessoa lançou, linha a linha',
+    sub: resumoCurto() + ' · dado DECLARADO, não medido',
+    formatos: [{ col: 9, z: FMT_HORA }, { col: 10, z: FMT_HORA }],
+    larguras: [12, 14, 28, 18, 32, 20, 16, 40, 34, 11, 13, 10, 13, 12],
+    grupos: [
+      { de: 0,  ate: 3,  rot: 'QUEM E QUANDO',  cor: 'azul'  },
+      { de: 4,  ate: 8,  rot: 'EM QUÊ',         cor: 'cinza' },
+      { de: 9,  ate: 11, rot: 'QUANTO',         cor: 'verde' },
+      { de: 12, ate: 13, rot: 'QUANDO DIGITOU', cor: 'ambar' },
+    ],
+    // lançado com mais de 7 dias de atraso: o número do mês ainda vai mudar
+    estado: (l, i) => i === 13 && typeof l[13] === 'number'
+      ? (l[13] > 30 ? 'ruim' : l[13] > 7 ? 'alerta' : null) : null,
+  });
+}
+
+/* ── CHAVES DE CRUZAMENTO ────────────────────────────────────────
+   O cruzamento com o Project Data vai casar texto escrito por gente
+   em dois sistemas diferentes. "ETE Paracatu", "ETE PARACATU " e
+   "Ete  Paracatu" são a mesma obra e três chaves diferentes — casar
+   pelo texto cru perde linha em silêncio, que é o pior jeito de
+   errar: o total vem menor e ninguém percebe.
+
+   Então toda aba de cruzamento leva, lado a lado, o texto como foi
+   digitado (para ler) e a chave normalizada (para casar). */
+const chaveDe = (t) => normalizar(t) || '(EM BRANCO)';
+
+/* ── POR PESSOA ──────────────────────────────────────────────────
+   O total de cada pessoa no período, separado por natureza. Responde
+   "quanto ela declarou, e quanto disso foi projeto de verdade". */
+function abaPorPessoa(linhas) {
+  const cab = ['Chave pessoa', 'Colaborador', 'Setor',
+               'Horas pagas', 'Produtivas', 'Indiretas', 'Falta/atestado',
+               'Férias/feriado (fora)', '% Produtivo',
+               'Dias lançados', 'Projetos distintos', 'Lançamentos',
+               'Primeiro lançamento', 'Último lançamento'];
+
+  const m = new Map();
+  for (const r of linhas) {
+    const k = chaveDe(r.colaborador);
+    let v = m.get(k);
+    if (!v) m.set(k, v = { nome: r.colaborador || '', setor: r.setor || '',
+      pagas: 0, prod: 0, indir: 0, absen: 0, fora: 0,
+      dias: new Set(), obras: new Set(), n: 0, de: '', ate: '' });
+    const g = TIPOS[r._tipo].grupo;
+    if (g === 'prod')       { v.prod  += r.horas; v.pagas += r.horas; }
+    else if (g === 'indir') { v.indir += r.horas; v.pagas += r.horas; }
+    else if (g === 'absen') { v.absen += r.horas; v.pagas += r.horas; }
+    else                    { v.fora  += r.horas; }
+    if (r.data) {
+      v.dias.add(r.data);
+      if (!v.de  || r.data < v.de)  v.de  = r.data;
+      if (!v.ate || r.data > v.ate) v.ate = r.data;
+    }
+    if (ehProjetoReal(r) && r.obra) v.obras.add(chaveDe(r.obra));
+    if (r.setor) v.setor = r.setor;
+    v.n++;
+  }
+
+  const dados = [...m.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'))
+    .map(([k, v]) => {
+      const trab = v.prod + v.indir;
+      return [k, v.nome, v.setor,
+        emHoras(v.pagas), emHoras(v.prod), emHoras(v.indir), emHoras(v.absen),
+        emHoras(v.fora), trab ? v.prod / trab : 0,
+        v.dias.size, v.obras.size, v.n,
+        v.de ? fmtData(v.de) : '', v.ate ? fmtData(v.ate) : ''];
+    });
+
+  return montarAba(cab, dados, {
+    titulo: 'POR PESSOA — total declarado no período',
+    sub: resumoCurto() + ' · dado DECLARADO, não medido',
+    formatos: [{ col: 3, z: FMT_HORA }, { col: 4, z: FMT_HORA }, { col: 5, z: FMT_HORA },
+               { col: 6, z: FMT_HORA }, { col: 7, z: FMT_HORA }, { col: 8, z: FMT_PCT }],
+    larguras: [28, 28, 18, 12, 12, 12, 15, 19, 12, 13, 16, 13, 17, 17],
+    grupos: [
+      { de: 0,  ate: 2,  rot: 'QUEM',             cor: 'azul'  },
+      { de: 3,  ate: 8,  rot: 'HORAS DECLARADAS', cor: 'verde' },
+      { de: 9,  ate: 13, rot: 'COBERTURA',        cor: 'cinza' },
+    ],
+  });
+}
+
+/* ── POR PROJETO ─────────────────────────────────────────────────
+   O outro eixo do comparativo. Só obra de verdade: reunião, falta e
+   férias não são projeto e poluiriam a comparação. */
+function abaPorProjeto(linhas) {
+  const cab = ['Chave projeto', 'Obra / Projeto', 'Status no cadastro',
+               'Horas produtivas', 'Lançamentos', 'Pessoas', 'Dias com movimento',
+               'Primeiro lançamento', 'Último lançamento',
+               'Grafias encontradas', 'Conferir'];
+
+  const m = new Map();
+  for (const r of linhas) {
+    if (!ehProjetoReal(r) || !r.obra) continue;
+    const k = chaveDe(r.obra);
+    let v = m.get(k);
+    if (!v) m.set(k, v = { grafias: new Set(), horas: 0, n: 0,
+      pessoas: new Set(), dias: new Set(), de: '', ate: '' });
+    v.grafias.add(r.obra);
+    v.horas += r.horas; v.n++;
+    v.pessoas.add(r.colaborador);
+    if (r.data) {
+      v.dias.add(r.data);
+      if (!v.de  || r.data < v.de)  v.de  = r.data;
+      if (!v.ate || r.data > v.ate) v.ate = r.data;
+    }
+  }
+
+  const dados = [...m.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'))
+    .map(([k, v]) => {
+      const grafias = [...v.grafias];
+      const o = obraCadastrada(grafias[0]);
+      return [k, grafias[0], o ? (o.status || 'EM ANDAMENTO') : '— não cadastrada —',
+        emHoras(v.horas), v.n, v.pessoas.size, v.dias.size,
+        v.de ? fmtData(v.de) : '', v.ate ? fmtData(v.ate) : '',
+        grafias.length,
+        /* Mais de uma grafia na mesma chave é aviso, não erro: aqui
+           elas foram somadas, mas no Project Data podem estar
+           separadas — e aí o cruzamento acusa diferença inexistente. */
+        grafias.length > 1
+          ? 'escrita de ' + grafias.length + ' jeitos: ' + grafias.join(' / ')
+          : (o ? '' : 'não está no cadastro de obras')];
+    });
+
+  return montarAba(cab, dados, {
+    titulo: 'POR PROJETO — só horas produtivas',
+    sub: resumoCurto() + ' · reunião, falta e férias ficam fora',
+    formatos: [{ col: 3, z: FMT_HORA }],
+    larguras: [34, 34, 22, 16, 13, 10, 18, 17, 17, 18, 52],
+    grupos: [
+      { de: 0,  ate: 2,  rot: 'QUAL PROJETO',        cor: 'azul'  },
+      { de: 3,  ate: 6,  rot: 'HORAS DECLARADAS',    cor: 'verde' },
+      { de: 7,  ate: 8,  rot: 'PERÍODO',             cor: 'cinza' },
+      { de: 9,  ate: 10, rot: 'RISCO NO CRUZAMENTO', cor: 'ambar' },
+    ],
+    estado: (l, i) => i === 10 && l[10] ? 'alerta' : null,
+  });
+}
+
+/* ── PESSOA × PROJETO ────────────────────────────────────────────
+   Os dois eixos cruzados: quanto cada um declarou em cada obra. */
+function abaPessoaProjeto(linhas) {
+  const cab = ['Chave pessoa', 'Chave projeto', 'Colaborador', 'Obra / Projeto',
+               'Tipo de hora', 'Horas', 'Lançamentos', 'Dias',
+               'Primeiro lançamento', 'Último lançamento'];
+
+  const SEP = String.fromCharCode(1);
+  const m = new Map();
+  for (const r of linhas) {
+    const kp = chaveDe(r.colaborador), ko = chaveDe(r.obra);
+    const k = kp + SEP + ko;
+    let v = m.get(k);
+    if (!v) m.set(k, v = { kp: kp, ko: ko, nome: r.colaborador || '',
+      obra: r.obra || '', tipo: r._tipo, horas: 0, n: 0,
+      dias: new Set(), de: '', ate: '' });
+    v.horas += r.horas; v.n++;
+    if (r.data) {
+      v.dias.add(r.data);
+      if (!v.de  || r.data < v.de)  v.de  = r.data;
+      if (!v.ate || r.data > v.ate) v.ate = r.data;
+    }
+  }
+
+  const dados = [...m.values()]
+    .sort((a, b) => a.kp.localeCompare(b.kp, 'pt-BR') || b.horas - a.horas)
+    .map(v => [v.kp, v.ko, v.nome, v.obra, TIPOS[v.tipo].nome,
+               emHoras(v.horas), v.n, v.dias.size,
+               v.de ? fmtData(v.de) : '', v.ate ? fmtData(v.ate) : '']);
+
+  return montarAba(cab, dados, {
+    titulo: 'PESSOA × PROJETO — quanto cada um declarou em cada obra',
+    sub: resumoCurto(),
+    formatos: [{ col: 5, z: FMT_HORA }],
+    larguras: [28, 34, 28, 34, 16, 12, 13, 10, 17, 17],
+    grupos: [
+      { de: 0, ate: 4, rot: 'QUEM, EM QUÊ',     cor: 'azul'  },
+      { de: 5, ate: 9, rot: 'HORAS DECLARADAS', cor: 'verde' },
+    ],
+  });
+}
+
+/* ── CONFERÊNCIAS ────────────────────────────────────────────────
+   Tudo que pode fazer o cruzamento mentir, numa aba só. Sem isto o
+   comparativo acusa diferença onde o problema é cadastro, e o número
+   errado chega à reunião como se fosse produtividade. */
+function abaConferencias(linhas) {
+  const cab = ['Tipo', 'Item', 'Detalhe', 'Impacto no cruzamento'];
+  const dados = [];
+
+  // obras com a mesma chave escritas de jeitos diferentes
+  const porChave = new Map();
+  for (const r of linhas) {
+    if (!r.obra) continue;
+    const k = chaveDe(r.obra);
+    if (!porChave.has(k)) porChave.set(k, new Set());
+    porChave.get(k).add(r.obra);
+  }
+  porChave.forEach((grafias, k) => {
+    if (grafias.size > 1) dados.push(['Obra escrita de vários jeitos', k,
+      [...grafias].join('  /  '),
+      'Aqui foram somadas. Se o Project Data separar, a diferença é de cadastro, não de hora.']);
+  });
+
+  const semObra = linhas.filter(r => !r.obra).length;
+  if (semObra) dados.push(['Lançamento sem obra', fmtN(semObra) + ' lançamentos', '',
+    'Não casa com projeto nenhum. Some do cruzamento por projeto.']);
+
+  const semDisc = linhas.filter(r => ehProjetoReal(r) && !r.disciplina).length;
+  if (semDisc) dados.push(['Sem disciplina', fmtN(semDisc) + ' lançamentos em obra', '',
+    'Não atrapalha o cruzamento; atrapalha o recorte por disciplina.']);
+
+  // dia acima de 12h: provável digitação, dos dois lados
+  const SEP = String.fromCharCode(1);
+  const porDia = new Map();
+  for (const r of linhas) {
+    porDia.set(r.colaborador + SEP + r.data,
+      (porDia.get(r.colaborador + SEP + r.data) || 0) + r.horas);
+  }
+  porDia.forEach((h, k) => {
+    if (h > 12) {
+      const p = k.split(SEP);
+      dados.push(['Dia acima de 12h', p[0], fmtData(p[1]) + ' · ' + fmtHoras(h) + ' h',
+        'Confira antes de comparar: pode ser digitação, pode ser plantão.']);
+    }
+  });
+
+  const retro = linhas.filter(r => r._atraso != null && r._atraso > 7);
+  if (retro.length) dados.push(['Lançado com atraso',
+    fmtN(retro.length) + ' lançamentos com mais de 7 dias',
+    fmtHoras(retro.reduce((s, r) => s + r.horas, 0)) + ' h',
+    'O total deste período ainda muda. Dois exports em dias diferentes podem divergir.']);
+
+  const hoje = isoDe(new Date());
+  const futuros = linhas.filter(r => r.data > hoje);
+  if (futuros.length) dados.push(['Data futura', fmtN(futuros.length) + ' lançamentos',
+    'trabalho lançado para depois de hoje',
+    'O Project Data não tem como ter medido isso. Diferença garantida.']);
+
+  if (typeof LIDERES !== 'undefined' && LIDERES.length) {
+    dados.push(['Fora das contas', fmtN(LIDERES.length) + ' líderes', '',
+      'Não aparecem neste arquivo. Se aparecerem no Project Data, a diferença é esperada.']);
+  }
+
+  if (!dados.length) dados.push(['—', 'Nada a conferir', '',
+    'Nenhum risco conhecido de cruzamento neste recorte.']);
+
+  return montarAba(cab, dados, {
+    titulo: 'CONFERÊNCIAS — leia antes de cruzar',
+    sub: 'o que pode fazer o comparativo acusar diferença que não existe',
+    larguras: [30, 34, 54, 76],
+    estado: () => 'alerta',
+  });
+}
+
+/* As abas que todo arquivo leva: os quatro grãos do cruzamento, as
+   conferências e o Leia-me.
+
+   Por que quatro grãos e não um só: o comparativo vai ser feito por
+   pessoa E por projeto, e cada pergunta tem o seu grão. Mandar só o
+   mais fino obrigaria a refazer a soma do outro lado — e soma
+   refeita na mão é exatamente onde entra número errado. */
+function anexarDetalheEDicionario(wb, usados, linhas, cap) {
+  if (linhas.length) {
+    XLSX.utils.book_append_sheet(wb, abaPorPessoa(linhas),
+      nomeDeAba('Por pessoa', usados));
+    XLSX.utils.book_append_sheet(wb, abaPorProjeto(linhas),
+      nomeDeAba('Por projeto', usados));
+    XLSX.utils.book_append_sheet(wb, abaPessoaProjeto(linhas),
+      nomeDeAba('Pessoa x projeto', usados));
+    XLSX.utils.book_append_sheet(wb, abaDetalheDia(linhas),
+      nomeDeAba('Detalhe por dia', usados));
+    XLSX.utils.book_append_sheet(wb, abaConferencias(linhas),
+      nomeDeAba('Conferencias', usados));
+  }
+
+  // só explica as colunas que este arquivo realmente tem
+  const usadasSet = new Set();
+  if (cap) {
+    Object.keys(cap.tabelas).forEach(id =>
+      cap.tabelas[id].colunas.forEach(c =>
+        usadasSet.add(String(c.rot).replace(/<[^>]*>/g, ''))));
+  }
+  ['Chave pessoa', 'Chave projeto', 'Data', 'Colaborador', 'Setor', 'Obra / Projeto',
+   'Disciplina', 'Tipo de hora', 'Tarefa', 'Observação', 'Horas', 'Horas pagas',
+   'Produtivas', 'Indiretas', 'Falta/atestado', 'Férias/feriado (fora)',
+   '% Produtivo', 'Lançado em', 'Dias de atraso']
+    .forEach(c => usadasSet.add(c));
+
+  XLSX.utils.book_append_sheet(wb,
+    abaDicionario([...usadasSet].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      contextoDoFiltro(),
+      ['As colunas "Chave pessoa" e "Chave projeto" existem para o cruzamento: ' +
+       'são o texto sem acento, em maiúscula e sem espaço sobrando. Case por elas, ' +
+       'nunca pelo texto como foi digitado.',
+       'Leia a aba Conferências antes de comparar com o Project Data.']),
+    nomeDeAba('Leia-me', usados));
+}
+
 /* Baixa a aba aberta. Na Visão Geral, baixa tudo. */
 function exportarAbaAtual() {
   const linhas = filtrar();
@@ -4360,6 +4842,11 @@ function exportarAbaAtual() {
       abaDeTabela(reg, (NOME_TABELA[id] || id).toUpperCase(), resumoCurto()),
       nomeDeAba(id, usados));
   });
+
+  /* Detalhe e comparativo entram em TODA aba, não só na Visão Geral:
+     o número agregado quase sempre puxa a pergunta "8h de quê?", e sem
+     a linha a linha no mesmo arquivo a resposta vira outro download. */
+  anexarDetalheEDicionario(wb, usados, linhas, cap);
 
   if (!wb.SheetNames.length) { alert('Esta aba não tem tabela para exportar.'); return; }
 
@@ -4408,6 +4895,8 @@ function exportarTudoExcel(linhas) {
         nomeDeAba(id, usados));
     });
   });
+
+  anexarDetalheEDicionario(wb, usados, linhas, null);
 
   baixarPlanilha(wb, 'painel-completo_' + isoDe(new Date()) + '.xlsx');
 }
